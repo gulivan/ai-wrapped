@@ -3,6 +3,8 @@
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
+  --wrapped-header-clearance: 7rem;
+  --wrapped-slide-bottom-space: 1rem;
   --surface-0: #020617;
   --surface-1: #091126;
   --surface-2: #101a34;
@@ -75,12 +77,14 @@ body {
   height: 100%;
   overflow-y: auto;
   scroll-snap-type: y mandatory;
+  scroll-padding-top: var(--wrapped-header-clearance);
   scroll-behavior: smooth;
+  padding-top: var(--wrapped-header-clearance);
 }
 
 .wrapped-card {
   position: relative;
-  min-height: calc(100vh - 7rem);
+  min-height: calc(100vh - var(--wrapped-header-clearance) - var(--wrapped-slide-bottom-space));
   scroll-snap-align: start;
   border-radius: 2rem;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -187,8 +191,12 @@ body {
 }
 
 @media (max-width: 768px) {
+  :root {
+    --wrapped-header-clearance: 6.5rem;
+    --wrapped-slide-bottom-space: 0.85rem;
+  }
+
   .wrapped-card {
-    min-height: calc(100vh - 6.5rem);
     border-radius: 1.5rem;
     padding: 1.1rem;
   }

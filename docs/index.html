@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Wrapped — Your year in AI coding agents</title>
+  <meta name="description" content="Spotify Wrapped-style desktop dashboard for your AI coding agent activity. Track tokens, costs, and usage across Claude Code, Codex, Gemini, Copilot, and more.">
+  <meta property="og:title" content="AI Wrapped">
+  <meta property="og:description" content="Spotify Wrapped-style desktop dashboard for your AI coding agent activity.">
+  <meta property="og:image" content="icon.png">
+  <link rel="icon" href="icon.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --surface-0: #020617;
+      --surface-1: #091126;
+      --surface-2: #101a34;
+      --text-primary: #f8fbff;
+      --text-secondary: #c8d2e7;
+      --text-muted: #8ea2c2;
+      --border-soft: rgba(139,163,201,0.2);
+      --border-subtle: rgba(197,212,236,0.18);
+      --accent-cyan: #22d3ee;
+      --accent-sky: #38bdf8;
+      --accent-blue: #3b82f6;
+      --accent-teal: #14b8a6;
+      --agent-claude: #f59e0b;
+      --agent-codex: #14b8a6;
+      --agent-gemini: #60a5fa;
+      --agent-opencode: #f97316;
+      --agent-droid: #34d399;
+      --agent-copilot: #f43f5e;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+      color: var(--text-secondary);
+      background:
+        radial-gradient(90rem 48rem at 92% -8%, rgba(59,130,246,0.25) 0%, transparent 62%),
+        radial-gradient(75rem 42rem at -8% 108%, rgba(20,184,166,0.28) 0%, transparent 55%),
+        var(--surface-0);
+      background-attachment: fixed;
+      -webkit-font-smoothing: antialiased;
+      line-height: 1.6;
+    }
+
+    /* --- Typography --- */
+    .kicker {
+      font-size: 0.72rem;
+      font-weight: 500;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: rgba(186,230,253,0.92);
+    }
+    .headline {
+      font-size: clamp(2.4rem, 5vw, 3.8rem);
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+    }
+    .section-title {
+      font-size: clamp(1.6rem, 3vw, 2.2rem);
+      font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: -0.01em;
+    }
+
+    /* --- Gradient text --- */
+    .gradient-text {
+      background: linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-cyan) 50%, var(--accent-teal) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* --- Glassmorphism card (matches app .wrapped-card) --- */
+    .glass-card {
+      background: rgba(9,17,38,0.65);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 2rem;
+    }
+
+    /* --- Inner tile (matches app .wrapped-tile) --- */
+    .glass-tile {
+      background: rgba(2,6,23,0.37);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 1.2rem;
+    }
+
+    /* --- Pill button (matches app .wrapped-button) --- */
+    .btn-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      height: 2.75rem;
+      padding: 0 1.5rem;
+      font-family: inherit;
+      font-size: 0.875rem;
+      font-weight: 600;
+      border-radius: 9999px;
+      text-decoration: none;
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+    .btn-primary {
+      background: rgba(56,189,248,0.18);
+      border: 1px solid rgba(125,211,252,0.6);
+      color: var(--text-primary);
+    }
+    .btn-primary:hover {
+      background: rgba(56,189,248,0.3);
+      border-color: rgba(125,211,252,0.85);
+    }
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border-soft);
+      color: var(--text-secondary);
+    }
+    .btn-ghost:hover {
+      border-color: rgba(34,211,238,0.5);
+      color: var(--text-primary);
+    }
+
+    /* --- Hero --- */
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 6rem 1.5rem 5rem;
+    }
+    .hero-orbs {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+    .hero-orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      animation: float 20s ease-in-out infinite;
+    }
+    @keyframes float {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      33% { transform: translate(30px, -20px) scale(1.05); }
+      66% { transform: translate(-20px, 15px) scale(0.95); }
+    }
+
+    /* --- Wrapped preview card --- */
+    .wrapped-preview {
+      background: linear-gradient(135deg, rgba(38,21,91,0.86), rgba(13,59,141,0.8) 54%, rgba(13,148,136,0.7));
+      border-radius: 2rem;
+      border: 1px solid rgba(255,255,255,0.12);
+      overflow: hidden;
+      position: relative;
+    }
+    .wrapped-preview::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, transparent 60%, rgba(2,6,23,0.4));
+      pointer-events: none;
+    }
+
+    /* --- Stat number --- */
+    .stat-number {
+      font-size: clamp(2rem, 4vw, 3rem);
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1;
+      letter-spacing: -0.03em;
+    }
+    .stat-label {
+      font-size: 0.68rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: rgba(203,213,225,0.92);
+    }
+
+    /* --- Agent dot --- */
+    .agent-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* --- Heatmap --- */
+    .heatmap-row { display: flex; gap: 3px; }
+    .heatmap-cell {
+      width: 11px;
+      height: 11px;
+      border-radius: 2px;
+      background: rgba(71,85,105,0.2);
+    }
+    .heatmap-cell.l1 { background: rgba(45,212,191,0.2); }
+    .heatmap-cell.l2 { background: rgba(45,212,191,0.4); }
+    .heatmap-cell.l3 { background: rgba(45,212,191,0.65); }
+    .heatmap-cell.l4 { background: rgba(45,212,191,0.9); }
+
+    /* --- Feature cards with app gradients --- */
+    .feature-card {
+      border-radius: 1.5rem;
+      border: 1px solid rgba(255,255,255,0.1);
+      padding: 2rem;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      transition: transform 0.2s, border-color 0.2s;
+    }
+    .feature-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(255,255,255,0.18);
+    }
+    .feature-agents { background: linear-gradient(142deg, rgba(10,45,85,0.8), rgba(8,80,105,0.72), rgba(56,189,248,0.2)); }
+    .feature-tokens { background: linear-gradient(140deg, rgba(22,36,86,0.8), rgba(10,73,107,0.72), rgba(34,197,94,0.15)); }
+    .feature-heatmap { background: linear-gradient(145deg, rgba(4,32,62,0.85), rgba(2,75,82,0.72), rgba(45,212,191,0.2)); }
+    .feature-tray { background: linear-gradient(145deg, rgba(12,37,89,0.82), rgba(7,75,121,0.7), rgba(56,189,248,0.18)); }
+
+    /* --- Agent badge --- */
+    .agent-badge {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 1.25rem 1rem;
+      border-radius: 1.2rem;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(2,6,23,0.37);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .agent-badge:hover {
+      transform: translateY(-2px);
+    }
+    .agent-ring {
+      width: 52px;
+      height: 52px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 0.8rem;
+      letter-spacing: 0.05em;
+    }
+
+    /* --- Code block --- */
+    .code-block {
+      font-family: "JetBrains Mono", "Menlo", monospace;
+      font-size: 0.82rem;
+      line-height: 1.8;
+    }
+    .code-prompt {
+      color: var(--text-muted);
+      user-select: none;
+    }
+    .code-cmd { color: var(--text-primary); }
+
+    /* --- Ring progress (matches app DashboardCharts) --- */
+    .ring-track { stroke: rgba(71,85,105,0.3); }
+    .ring-fill {
+      stroke: url(#ring-grad);
+      stroke-linecap: round;
+      transform: rotate(-90deg);
+      transform-origin: center;
+    }
+
+    /* --- Layout helpers --- */
+    .container { max-width: 64rem; margin: 0 auto; padding: 0 1.5rem; }
+    .grid-2 { display: grid; grid-template-columns: 1fr; gap: 1.25rem; }
+    @media (min-width: 640px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
+    .grid-agents { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; }
+    @media (min-width: 640px) { .grid-agents { grid-template-columns: repeat(6, 1fr); } }
+
+    /* --- Sections --- */
+    section { padding: 5rem 0; }
+    section + section { border-top: 1px solid var(--border-subtle); }
+
+    /* --- Footer --- */
+    footer { border-top: 1px solid var(--border-subtle); }
+
+    /* --- Scroll fade-in --- */
+    .reveal {
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 0.6s ease, transform 0.6s ease;
+    }
+    .reveal.visible {
+      opacity: 1;
+      transform: none;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Hero -->
+  <section class="hero">
+    <!-- Floating orbs -->
+    <div class="hero-orbs">
+      <div class="hero-orb" style="width:500px;height:500px;top:-20%;right:-5%;background:rgba(59,130,246,0.15);animation-delay:0s;"></div>
+      <div class="hero-orb" style="width:400px;height:400px;bottom:-10%;left:-10%;background:rgba(20,184,166,0.12);animation-delay:-7s;"></div>
+      <div class="hero-orb" style="width:250px;height:250px;top:30%;left:50%;background:rgba(139,92,246,0.1);animation-delay:-13s;"></div>
+    </div>
+
+    <div class="container" style="position:relative;z-index:1;">
+      <!-- Icon + Title -->
+      <div style="text-align:center;margin-bottom:3.5rem;">
+        <img src="icon.png" alt="AI Wrapped" width="88" height="88"
+             style="border-radius:1.25rem;margin-bottom:1.5rem;box-shadow:0 0 40px rgba(56,189,248,0.15);">
+        <p class="kicker" style="margin-bottom:0.75rem;">Your year in AI</p>
+        <h1 class="headline">
+          AI <span class="gradient-text">Wrapped</span>
+        </h1>
+        <p style="max-width:34rem;margin:1rem auto 2rem;font-size:1.1rem;color:var(--text-muted);line-height:1.6;">
+          A Spotify Wrapped-style desktop dashboard for your AI coding agents.
+          See your tokens, costs, and activity — beautifully visualized.
+        </p>
+        <div style="display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap;">
+          <a href="https://github.com/gulivan/ai-wrapped" target="_blank" rel="noopener" class="btn-pill btn-primary">
+            <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+            View on GitHub
+          </a>
+          <a href="#install" class="btn-pill btn-ghost">Get Started</a>
+        </div>
+      </div>
+
+      <!-- Wrapped preview card -->
+      <div class="wrapped-preview" style="max-width:44rem;margin:0 auto;padding:2.5rem 2rem;">
+        <p class="kicker" style="margin-bottom:1.5rem;">Your 2025 Wrapped</p>
+
+        <!-- Stats row -->
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:2rem;">
+          <div>
+            <div class="stat-number">142</div>
+            <div class="stat-label" style="margin-top:0.25rem;">Sessions</div>
+          </div>
+          <div>
+            <div class="stat-number">2.1<span style="font-size:0.5em;font-weight:500;letter-spacing:0;">M</span></div>
+            <div class="stat-label" style="margin-top:0.25rem;">Tokens</div>
+          </div>
+          <div>
+            <div class="stat-number">$47</div>
+            <div class="stat-label" style="margin-top:0.25rem;">Total Cost</div>
+          </div>
+          <div>
+            <div class="stat-number">891</div>
+            <div class="stat-label" style="margin-top:0.25rem;">Tool Calls</div>
+          </div>
+        </div>
+
+        <!-- Mini tiles row -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;">
+          <!-- Agent breakdown -->
+          <div class="glass-tile" style="padding:1.25rem;">
+            <div class="stat-label" style="margin-bottom:0.75rem;">Top Agents</div>
+            <div style="display:flex;flex-direction:column;gap:0.5rem;">
+              <div style="display:flex;align-items:center;gap:0.5rem;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" style="flex-shrink:0;"><path fill="var(--agent-claude)" d="m4.714 15.956l4.718-2.648l.079-.23l-.08-.128h-.23l-.79-.048l-2.695-.073l-2.337-.097l-2.265-.122l-.57-.121l-.535-.704l.055-.353l.48-.321l.685.06l1.518.104l2.277.157l1.651.098l2.447.255h.389l.054-.158l-.133-.097l-.103-.098l-2.356-1.596l-2.55-1.688l-1.336-.972l-.722-.491L2 6.223l-.158-1.008l.656-.722l.88.06l.224.061l.893.686l1.906 1.476l2.49 1.833l.364.304l.146-.104l.018-.072l-.164-.274l-1.354-2.446l-1.445-2.49l-.644-1.032l-.17-.619a3 3 0 0 1-.103-.729L6.287.133L6.7 0l.995.134l.42.364l.619 1.415L9.735 4.14l1.555 3.03l.455.898l.243.832l.09.255h.159V9.01l.127-1.706l.237-2.095l.23-2.695l.08-.76l.376-.91l.747-.492l.583.28l.48.685l-.067.444l-.286 1.851l-.558 2.903l-.365 1.942h.213l.243-.242l.983-1.306l1.652-2.064l.728-.82l.85-.904l.547-.431h1.032l.759 1.129l-.34 1.166l-1.063 1.347l-.88 1.142l-1.263 1.7l-.79 1.36l.074.11l.188-.02l2.853-.606l1.542-.28l1.84-.315l.832.388l.09.395l-.327.807l-1.967.486l-2.307.462l-3.436.813l-.043.03l.049.061l1.548.146l.662.036h1.62l3.018.225l.79.522l.473.638l-.08.485l-1.213.62l-1.64-.389l-3.825-.91l-1.31-.329h-.183v.11l1.093 1.068l2.003 1.81l2.508 2.33l.127.578l-.321.455l-.34-.049l-2.204-1.657l-.85-.747l-1.925-1.62h-.127v.17l.443.649l2.343 3.521l.122 1.08l-.17.353l-.607.213l-.668-.122l-1.372-1.924l-1.415-2.168l-1.141-1.943l-.14.08l-.674 7.254l-.316.37l-.728.28l-.607-.461l-.322-.747l.322-1.476l.388-1.924l.316-1.53l.285-1.9l.17-.632l-.012-.042l-.14.018l-1.432 1.967l-2.18 2.945l-1.724 1.845l-.413.164l-.716-.37l.066-.662l.401-.589l2.386-3.036l1.439-1.882l.929-1.086l-.006-.158h-.055L4.138 18.56l-1.13.146l-.485-.456l.06-.746l.231-.243l1.907-1.312Z"/></svg>
+                <span style="font-size:0.82rem;color:var(--text-primary);flex:1;">Claude Code</span>
+                <span style="font-size:0.82rem;color:var(--text-muted);font-variant-numeric:tabular-nums;">68%</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:0.5rem;">
+                <span style="font-size:0.65rem;flex-shrink:0;width:14px;text-align:center;">🛸</span>
+                <span style="font-size:0.82rem;color:var(--text-primary);flex:1;">Copilot</span>
+                <span style="font-size:0.82rem;color:var(--text-muted);font-variant-numeric:tabular-nums;">18%</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:0.5rem;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" style="flex-shrink:0;"><path fill="var(--agent-gemini)" d="M24 12.024c-6.437.388-11.59 5.539-11.977 11.976h-.047C11.588 17.563 6.436 12.412 0 12.024v-.047C6.437 11.588 11.588 6.437 11.976 0h.047c.388 6.437 5.54 11.588 11.977 11.977z"/></svg>
+                <span style="font-size:0.82rem;color:var(--text-primary);flex:1;">Gemini CLI</span>
+                <span style="font-size:0.82rem;color:var(--text-muted);font-variant-numeric:tabular-nums;">14%</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Activity ring -->
+          <div class="glass-tile" style="padding:1.25rem;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+            <svg width="80" height="80" viewBox="0 0 80 80">
+              <defs>
+                <linearGradient id="ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#22d3ee"/>
+                  <stop offset="100%" stop-color="#0ea5e9"/>
+                </linearGradient>
+              </defs>
+              <circle cx="40" cy="40" r="32" fill="none" stroke-width="6" class="ring-track"/>
+              <circle cx="40" cy="40" r="32" fill="none" stroke-width="6" class="ring-fill"
+                      stroke-dasharray="201" stroke-dashoffset="40"/>
+            </svg>
+            <div style="margin-top:0.5rem;text-align:center;">
+              <div style="font-size:1.1rem;font-weight:600;color:var(--text-primary);">80%</div>
+              <div class="stat-label">Active Days</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section>
+    <div class="container reveal">
+      <div style="text-align:center;margin-bottom:3rem;">
+        <p class="kicker" style="margin-bottom:0.5rem;">Features</p>
+        <h2 class="section-title">Everything about your AI usage</h2>
+      </div>
+
+      <div class="grid-2">
+        <div class="feature-card feature-agents">
+          <div style="display:flex;gap:6px;margin-bottom:1.25rem;">
+            <div style="width:28px;height:28px;border-radius:8px;background:rgba(245,158,11,0.2);border:1px solid rgba(245,158,11,0.3);"></div>
+            <div style="width:28px;height:28px;border-radius:8px;background:rgba(20,184,166,0.2);border:1px solid rgba(20,184,166,0.3);"></div>
+            <div style="width:28px;height:28px;border-radius:8px;background:rgba(96,165,250,0.2);border:1px solid rgba(96,165,250,0.3);"></div>
+            <div style="width:28px;height:28px;border-radius:8px;background:rgba(249,115,22,0.2);border:1px solid rgba(249,115,22,0.3);"></div>
+            <div style="width:28px;height:28px;border-radius:8px;background:rgba(52,211,153,0.2);border:1px solid rgba(52,211,153,0.3);"></div>
+            <div style="width:28px;height:28px;border-radius:8px;background:rgba(244,63,94,0.2);border:1px solid rgba(244,63,94,0.3);"></div>
+          </div>
+          <h3 style="font-size:1.15rem;font-weight:600;color:var(--text-primary);margin-bottom:0.5rem;">6 Agents, One View</h3>
+          <p style="font-size:0.88rem;color:var(--text-muted);line-height:1.6;">Claude Code, Codex, Gemini CLI, OpenCode, Droid, and Copilot — parsed and unified from local session files.</p>
+        </div>
+
+        <div class="feature-card feature-tokens">
+          <div style="display:flex;align-items:baseline;gap:0.5rem;margin-bottom:1.25rem;">
+            <span style="font-size:1.8rem;font-weight:700;color:var(--text-primary);letter-spacing:-0.03em;">$47.20</span>
+            <span style="font-size:0.75rem;color:var(--accent-teal);">this month</span>
+          </div>
+          <h3 style="font-size:1.15rem;font-weight:600;color:var(--text-primary);margin-bottom:0.5rem;">Token & Cost Tracking</h3>
+          <p style="font-size:0.88rem;color:var(--text-muted);line-height:1.6;">Exactly how many tokens you've burned and what it costs. Broken down by model — Opus, Sonnet, GPT-4o, Gemini Pro.</p>
+        </div>
+
+        <div class="feature-card feature-heatmap">
+          <!-- Mini heatmap -->
+          <div style="display:flex;flex-direction:column;gap:3px;margin-bottom:1.25rem;">
+            <div class="heatmap-row">
+              <div class="heatmap-cell"></div><div class="heatmap-cell l1"></div><div class="heatmap-cell l2"></div><div class="heatmap-cell"></div><div class="heatmap-cell l3"></div><div class="heatmap-cell l4"></div><div class="heatmap-cell l2"></div><div class="heatmap-cell l1"></div><div class="heatmap-cell"></div><div class="heatmap-cell l3"></div><div class="heatmap-cell l4"></div><div class="heatmap-cell l2"></div><div class="heatmap-cell l1"></div><div class="heatmap-cell l3"></div>
+            </div>
+            <div class="heatmap-row">
+              <div class="heatmap-cell l1"></div><div class="heatmap-cell"></div><div class="heatmap-cell l3"></div><div class="heatmap-cell l2"></div><div class="heatmap-cell l4"></div><div class="heatmap-cell l1"></div><div class="heatmap-cell"></div><div class="heatmap-cell l2"></div><div class="heatmap-cell l4"></div><div class="heatmap-cell"></div><div class="heatmap-cell l1"></div><div class="heatmap-cell l3"></div><div class="heatmap-cell l4"></div><div class="heatmap-cell l2"></div>
+            </div>
+            <div class="heatmap-row">
+              <div class="heatmap-cell l2"></div><div class="heatmap-cell l4"></div><div class="heatmap-cell l1"></div><div class="heatmap-cell l3"></div><div class="heatmap-cell"></div><div class="heatmap-cell l2"></div><div class="heatmap-cell l4"></div><div class="heatmap-cell l3"></div><div class="heatmap-cell l1"></div><div class="heatmap-cell l2"></div><div class="heatmap-cell"></div><div class="heatmap-cell l4"></div><div class="heatmap-cell l1"></div><div class="heatmap-cell l3"></div>
+            </div>
+          </div>
+          <h3 style="font-size:1.15rem;font-weight:600;color:var(--text-primary);margin-bottom:0.5rem;">Daily Activity Heatmap</h3>
+          <p style="font-size:0.88rem;color:var(--text-muted);line-height:1.6;">Contribution-style graph showing daily AI usage. Spot patterns in when and how intensely you use each agent.</p>
+        </div>
+
+        <div class="feature-card feature-tray">
+          <!-- Menu bar mockup -->
+          <div style="display:flex;align-items:center;gap:0.75rem;padding:0.5rem 0.75rem;background:rgba(2,6,23,0.5);border:1px solid rgba(255,255,255,0.08);border-radius:0.6rem;margin-bottom:1.25rem;font-size:0.78rem;width:fit-content;">
+            <img src="icon.png" width="14" height="14" alt="" style="border-radius:3px;opacity:0.85;">
+            <span style="color:var(--text-primary);font-weight:500;">3 sessions</span>
+            <span style="color:var(--text-muted);">&middot;</span>
+            <span style="color:var(--accent-cyan);">24k tokens</span>
+            <span style="color:var(--text-muted);">&middot;</span>
+            <span style="color:var(--accent-teal);">$1.20</span>
+          </div>
+          <h3 style="font-size:1.15rem;font-weight:600;color:var(--text-primary);margin-bottom:0.5rem;">System Tray Stats</h3>
+          <p style="font-size:0.88rem;color:var(--text-muted);line-height:1.6;">Today's session count, tokens, and cost live in your menu bar. Always visible, never in the way.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Supported Agents -->
+  <section>
+    <div class="container reveal">
+      <div style="text-align:center;margin-bottom:3rem;">
+        <p class="kicker" style="margin-bottom:0.5rem;">Compatibility</p>
+        <h2 class="section-title">Supported Agents</h2>
+        <p style="color:var(--text-muted);margin-top:0.75rem;max-width:28rem;margin-left:auto;margin-right:auto;font-size:0.95rem;">
+          Reads session logs directly from disk. No API keys, no cloud, fully local.
+        </p>
+      </div>
+
+      <div class="grid-agents" style="max-width:40rem;margin:0 auto;">
+        <div class="agent-badge" style="border-color:rgba(245,158,11,0.15);">
+          <div class="agent-ring" style="background:rgba(245,158,11,0.12);color:var(--agent-claude);">
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="m4.714 15.956l4.718-2.648l.079-.23l-.08-.128h-.23l-.79-.048l-2.695-.073l-2.337-.097l-2.265-.122l-.57-.121l-.535-.704l.055-.353l.48-.321l.685.06l1.518.104l2.277.157l1.651.098l2.447.255h.389l.054-.158l-.133-.097l-.103-.098l-2.356-1.596l-2.55-1.688l-1.336-.972l-.722-.491L2 6.223l-.158-1.008l.656-.722l.88.06l.224.061l.893.686l1.906 1.476l2.49 1.833l.364.304l.146-.104l.018-.072l-.164-.274l-1.354-2.446l-1.445-2.49l-.644-1.032l-.17-.619a3 3 0 0 1-.103-.729L6.287.133L6.7 0l.995.134l.42.364l.619 1.415L9.735 4.14l1.555 3.03l.455.898l.243.832l.09.255h.159V9.01l.127-1.706l.237-2.095l.23-2.695l.08-.76l.376-.91l.747-.492l.583.28l.48.685l-.067.444l-.286 1.851l-.558 2.903l-.365 1.942h.213l.243-.242l.983-1.306l1.652-2.064l.728-.82l.85-.904l.547-.431h1.032l.759 1.129l-.34 1.166l-1.063 1.347l-.88 1.142l-1.263 1.7l-.79 1.36l.074.11l.188-.02l2.853-.606l1.542-.28l1.84-.315l.832.388l.09.395l-.327.807l-1.967.486l-2.307.462l-3.436.813l-.043.03l.049.061l1.548.146l.662.036h1.62l3.018.225l.79.522l.473.638l-.08.485l-1.213.62l-1.64-.389l-3.825-.91l-1.31-.329h-.183v.11l1.093 1.068l2.003 1.81l2.508 2.33l.127.578l-.321.455l-.34-.049l-2.204-1.657l-.85-.747l-1.925-1.62h-.127v.17l.443.649l2.343 3.521l.122 1.08l-.17.353l-.607.213l-.668-.122l-1.372-1.924l-1.415-2.168l-1.141-1.943l-.14.08l-.674 7.254l-.316.37l-.728.28l-.607-.461l-.322-.747l.322-1.476l.388-1.924l.316-1.53l.285-1.9l.17-.632l-.012-.042l-.14.018l-1.432 1.967l-2.18 2.945l-1.724 1.845l-.413.164l-.716-.37l.066-.662l.401-.589l2.386-3.036l1.439-1.882l.929-1.086l-.006-.158h-.055L4.138 18.56l-1.13.146l-.485-.456l.06-.746l.231-.243l1.907-1.312Z"/></svg>
+          </div>
+          <span style="font-size:0.82rem;font-weight:500;color:var(--text-primary);">Claude Code</span>
+        </div>
+        <div class="agent-badge" style="border-color:rgba(20,184,166,0.15);">
+          <div class="agent-ring" style="background:rgba(20,184,166,0.12);color:var(--agent-codex);">
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M20.562 10.188c.25-.688.313-1.376.25-2.063c-.062-.687-.312-1.375-.625-2c-.562-.937-1.375-1.687-2.312-2.125c-1-.437-2.063-.562-3.125-.312c-.5-.5-1.063-.938-1.688-1.25S11.687 2 11 2a5.17 5.17 0 0 0-3 .938c-.875.624-1.5 1.5-1.813 2.5c-.75.187-1.375.5-2 .875c-.562.437-1 1-1.375 1.562c-.562.938-.75 2-.625 3.063a5.44 5.44 0 0 0 1.25 2.874a4.7 4.7 0 0 0-.25 2.063c.063.688.313 1.375.625 2c.563.938 1.375 1.688 2.313 2.125c1 .438 2.062.563 3.125.313c.5.5 1.062.937 1.687 1.25S12.312 22 13 22a5.17 5.17 0 0 0 3-.937c.875-.625 1.5-1.5 1.812-2.5a4.54 4.54 0 0 0 1.938-.875c.562-.438 1.062-.938 1.375-1.563c.562-.937.75-2 .625-3.062c-.125-1.063-.5-2.063-1.188-2.876m-7.5 10.5c-1 0-1.75-.313-2.437-.875c0 0 .062-.063.125-.063l4-2.312a.5.5 0 0 0 .25-.25a.57.57 0 0 0 .062-.313V11.25l1.688 1v4.625a3.685 3.685 0 0 1-3.688 3.813M5 17.25c-.438-.75-.625-1.625-.438-2.5c0 0 .063.063.125.063l4 2.312a.56.56 0 0 0 .313.063c.125 0 .25 0 .312-.063l4.875-2.812v1.937l-4.062 2.375A3.7 3.7 0 0 1 7.312 19c-1-.25-1.812-.875-2.312-1.75M3.937 8.563a3.8 3.8 0 0 1 1.938-1.626v4.751c0 .124 0 .25.062.312a.5.5 0 0 0 .25.25l4.875 2.813l-1.687 1l-4-2.313a3.7 3.7 0 0 1-1.75-2.25c-.25-.937-.188-2.062.312-2.937M17.75 11.75l-4.875-2.812l1.687-1l4 2.312c.625.375 1.125.875 1.438 1.5s.5 1.313.437 2.063a3.7 3.7 0 0 1-.75 1.937c-.437.563-1 1-1.687 1.25v-4.75c0-.125 0-.25-.063-.312c0 0-.062-.126-.187-.188m1.687-2.5s-.062-.062-.125-.062l-4-2.313c-.125-.062-.187-.062-.312-.062s-.25 0-.313.062L9.812 9.688V7.75l4.063-2.375c.625-.375 1.312-.5 2.062-.5c.688 0 1.375.25 2 .688c.563.437 1.063 1 1.313 1.625s.312 1.375.187 2.062m-10.5 3.5l-1.687-1V7.063c0-.688.187-1.438.562-2C8.187 4.438 8.75 4 9.375 3.688a3.37 3.37 0 0 1 2.062-.313c.688.063 1.375.375 1.938.813c0 0-.063.062-.125.062l-4 2.313a.5.5 0 0 0-.25.25c-.063.125-.063.187-.063.312zm.875-2L12 9.5l2.187 1.25v2.5L12 14.5l-2.188-1.25z"/></svg>
+          </div>
+          <span style="font-size:0.82rem;font-weight:500;color:var(--text-primary);">Codex</span>
+        </div>
+        <div class="agent-badge" style="border-color:rgba(96,165,250,0.15);">
+          <div class="agent-ring" style="background:rgba(96,165,250,0.12);color:var(--agent-gemini);">
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M24 12.024c-6.437.388-11.59 5.539-11.977 11.976h-.047C11.588 17.563 6.436 12.412 0 12.024v-.047C6.437 11.588 11.588 6.437 11.976 0h.047c.388 6.437 5.54 11.588 11.977 11.977z"/></svg>
+          </div>
+          <span style="font-size:0.82rem;font-weight:500;color:var(--text-primary);">Gemini CLI</span>
+        </div>
+        <div class="agent-badge" style="border-color:rgba(249,115,22,0.15);">
+          <div class="agent-ring" style="background:rgba(249,115,22,0.12);font-size:1.4rem;">💻</div>
+          <span style="font-size:0.82rem;font-weight:500;color:var(--text-primary);">OpenCode</span>
+        </div>
+        <div class="agent-badge" style="border-color:rgba(52,211,153,0.15);">
+          <div class="agent-ring" style="background:rgba(52,211,153,0.12);font-size:1.4rem;">🤖</div>
+          <span style="font-size:0.82rem;font-weight:500;color:var(--text-primary);">Droid</span>
+        </div>
+        <div class="agent-badge" style="border-color:rgba(244,63,94,0.15);">
+          <div class="agent-ring" style="background:rgba(244,63,94,0.12);font-size:1.4rem;">🛸</div>
+          <span style="font-size:0.82rem;font-weight:500;color:var(--text-primary);">Copilot</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Install -->
+  <section id="install">
+    <div class="container reveal">
+      <div style="text-align:center;margin-bottom:3rem;">
+        <p class="kicker" style="margin-bottom:0.5rem;">Get Started</p>
+        <h2 class="section-title">Clone, install, run</h2>
+      </div>
+
+      <div style="max-width:36rem;margin:0 auto;display:flex;flex-direction:column;gap:1rem;">
+        <div class="glass-card" style="padding:1.75rem;border-radius:1.2rem;">
+          <div class="code-block">
+            <div><span class="code-prompt">$ </span><span class="code-cmd">git clone https://github.com/gulivan/ai-wrapped.git</span></div>
+            <div><span class="code-prompt">$ </span><span class="code-cmd">cd ai-wrapped</span></div>
+            <div><span class="code-prompt">$ </span><span class="code-cmd">bun install</span></div>
+            <div><span class="code-prompt">$ </span><span class="code-cmd">bun run dev</span></div>
+          </div>
+        </div>
+
+        <div class="glass-tile" style="padding:1.25rem 1.5rem;">
+          <div class="stat-label" style="margin-bottom:0.75rem;">Requirements</div>
+          <div style="display:flex;flex-direction:column;gap:0.5rem;font-size:0.88rem;">
+            <div style="display:flex;align-items:center;gap:0.5rem;">
+              <svg width="14" height="14" fill="none" stroke="var(--accent-teal)" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              <span>macOS (native webview via <a href="https://electrobun.dev" target="_blank" rel="noopener" style="color:var(--accent-cyan);text-decoration:none;border-bottom:1px solid rgba(34,211,238,0.3);">Electrobun</a>)</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:0.5rem;">
+              <svg width="14" height="14" fill="none" stroke="var(--accent-teal)" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              <span><a href="https://bun.sh" target="_blank" rel="noopener" style="color:var(--accent-cyan);text-decoration:none;border-bottom:1px solid rgba(34,211,238,0.3);">Bun</a> runtime</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:0.5rem;">
+              <svg width="14" height="14" fill="none" stroke="var(--accent-teal)" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+              <span>At least one AI coding agent with local session logs</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container" style="padding-top:2rem;padding-bottom:2rem;display:flex;align-items:center;justify-content:space-between;font-size:0.82rem;color:var(--text-muted);">
+      <span>MIT License</span>
+      <a href="https://github.com/gulivan/ai-wrapped" target="_blank" rel="noopener" style="color:var(--text-muted);text-decoration:none;display:flex;align-items:center;gap:0.4rem;transition:color 0.2s;">
+        <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        gulivan/ai-wrapped
+      </a>
+    </div>
+  </footer>
+
+  <!-- Scroll reveal -->
+  <script>
+    const reveals = document.querySelectorAll('.reveal');
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); } });
+    }, { threshold: 0.15 });
+    reveals.forEach(el => observer.observe(el));
+  </script>
+
+</body>
+</html>

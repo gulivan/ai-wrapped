@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import Dashboard from "./components/Dashboard";
-import Sidebar from "./components/Sidebar";
 import { useRPC } from "./hooks/useRPC";
 
 type ThemeMode = "system" | "light" | "dark";
@@ -33,7 +32,6 @@ const App = () => {
 
   return (
     <div className="h-screen overflow-hidden bg-[var(--surface-0)] text-[var(--text-primary)]">
-      <Sidebar />
       <Dashboard />
     </div>
   );

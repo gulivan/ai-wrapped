@@ -30,6 +30,21 @@ const rangeLengthDays = (dateFrom: string, dateTo: string): number => {
   return Math.floor((to - from) / ONE_DAY_MS) + 1;
 };
 
+const calculateCurrentStreakDays = (activeDates: Set<string>, dateFrom: string, dateTo: string): number => {
+  const from = Date.parse(`${dateFrom}T00:00:00Z`);
+  const to = Date.parse(`${dateTo}T00:00:00Z`);
+  if (Number.isNaN(from) || Number.isNaN(to) || to < from) return 0;
+
+  let streak = 0;
+  for (let day = to; day >= from; day -= ONE_DAY_MS) {
+    const key = new Date(day).toISOString().slice(0, 10);
+    if (!activeDates.has(key)) break;
+    streak += 1;
+  }
+
+  return streak;
+};
+
 const currentYear = (): number => new Date().getFullYear();
 
 export type DashboardDateRange = "last365" | `year:${number}`;
@@ -100,6 +115,7 @@ export interface ModelBreakdown {
 }
 
 export type DailyAgentTokensByDate = Record<string, Record<SessionSource, number>>;
+export type DailyAgentCostsByDate = Record<string, Record<SessionSource, number>>;
 
 export interface DashboardTotals {
   totalSessions: number;
@@ -109,6 +125,7 @@ export interface DashboardTotals {
   averageSessionDurationMs: number;
   longestSessionEstimateMs: number;
   activeDays: number;
+  currentStreakDays: number;
   dateSpanDays: number;
   dailyAverageCostUsd: number;
   mostExpensiveDay: TimelinePoint | null;
@@ -122,12 +139,22 @@ const emptyTotals: DashboardTotals = {
   averageSessionDurationMs: 0,
   longestSessionEstimateMs: 0,
   activeDays: 0,
+  currentStreakDays: 0,
   dateSpanDays: 0,
   dailyAverageCostUsd: 0,
   mostExpensiveDay: null,
 };
 
 const createEmptySourceTokenMap = (): Record<SessionSource, number> => ({
+  claude: 0,
+  codex: 0,
+  gemini: 0,
+  opencode: 0,
+  droid: 0,
+  copilot: 0,
+});
+
+const createEmptySourceCostMap = (): Record<SessionSource, number> => ({
   claude: 0,
   codex: 0,
   gemini: 0,
@@ -152,6 +179,22 @@ const buildDailyAgentTokensByDate = (
   return byDate;
 };
 
+const buildDailyAgentCostsByDate = (
+  rowsBySource: Array<{ source: SessionSource; rows: DailyAggregate[] }>,
+): DailyAgentCostsByDate => {
+  const byDate: DailyAgentCostsByDate = {};
+
+  for (const { source, rows } of rowsBySource) {
+    for (const row of rows) {
+      const current = byDate[row.date] ?? createEmptySourceCostMap();
+      current[source] = row.costUsd;
+      byDate[row.date] = current;
+    }
+  }
+
+  return byDate;
+};
+
 export const useDashboardData = () => {
   const rpc = useRPC();
   const [selectedRange, setSelectedRange] = useState<DashboardDateRange>("last365");
@@ -160,6 +203,7 @@ export const useDashboardData = () => {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [timeline, setTimeline] = useState<DailyAggregate[]>([]);
   const [dailyAgentTokensByDate, setDailyAgentTokensByDate] = useState<DailyAgentTokensByDate>({});
+  const [dailyAgentCostsByDate, setDailyAgentCostsByDate] = useState<DailyAgentCostsByDate>({});
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -178,6 +222,14 @@ export const useDashboardData = () => {
       setTimeline(timelineResult);
       setDailyAgentTokensByDate(
         buildDailyAgentTokensByDate(
+          timelineBySourceResults.map((rows, index) => ({
+            source: SESSION_SOURCES[index],
+            rows,
+          })),
+        ),
+      );
+      setDailyAgentCostsByDate(
+        buildDailyAgentCostsByDate(
           timelineBySourceResults.map((rows, index) => ({
             source: SESSION_SOURCES[index],
             rows,
@@ -229,7 +281,11 @@ export const useDashboardData = () => {
     if (!summary) return emptyTotals;
 
     const spanDays = rangeLengthDays(dateFrom, dateTo);
-    const activeDays = timelinePoints.filter((entry) => entry.sessions > 0).length;
+    const activeDates = new Set(
+      timelinePoints.filter((entry) => entry.sessions > 0).map((entry) => entry.date),
+    );
+    const activeDays = activeDates.size;
+    const currentStreakDays = calculateCurrentStreakDays(activeDates, dateFrom, dateTo);
     const mostExpensiveDay =
       timelinePoints.length === 0
         ? null
@@ -247,6 +303,7 @@ export const useDashboardData = () => {
         return Math.max(max, entry.durationMs / entry.sessions);
       }, 0),
       activeDays,
+      currentStreakDays,
       dateSpanDays: spanDays,
       dailyAverageCostUsd: spanDays > 0 ? summary.totals.costUsd / spanDays : 0,
       mostExpensiveDay,
@@ -302,6 +359,7 @@ export const useDashboardData = () => {
     setSelectedRange,
     rangeOptions,
     dailyAgentTokensByDate,
+    dailyAgentCostsByDate,
     summary,
     timeline: timelinePoints,
     loading,

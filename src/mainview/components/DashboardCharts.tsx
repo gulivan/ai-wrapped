@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import { SESSION_SOURCES, type SessionSource } from "@shared/schema";
 import {
   Area,
@@ -18,6 +18,7 @@ import { formatDate, formatNumber, formatTokens, formatUsd } from "../lib/format
 import { SOURCE_COLORS, SOURCE_LABELS } from "../lib/constants";
 import type {
   AgentBreakdown,
+  DailyAgentCostsByDate,
   DailyAgentTokensByDate,
   ModelBreakdown,
   TimelinePoint,
@@ -30,6 +31,7 @@ interface DashboardChartsProps {
   agentBreakdown: AgentBreakdown[];
   timeline: TimelinePoint[];
   dailyAgentTokensByDate: DailyAgentTokensByDate;
+  dailyAgentCostsByDate: DailyAgentCostsByDate;
   topRepos: Array<{ repo: string; sessions: number; costUsd: number }>;
   totalCostUsd: number;
   dailyAverageCostUsd: number;
@@ -129,6 +131,20 @@ const formatUsdTooltip = (value: number | string | undefined) =>
 const formatNumberTooltip = (value: number | string | undefined) =>
   formatNumber(typeof value === "number" ? value : Number(value ?? 0));
 
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+type CostSourceFilter = "all" | SessionSource;
+
+const isCostSourceFilter = (value: string): value is CostSourceFilter =>
+  value === "all" || SESSION_SOURCES.includes(value as SessionSource);
+
+const rangeLengthDays = (dateFrom: string, dateTo: string): number => {
+  const from = Date.parse(`${dateFrom}T00:00:00Z`);
+  const to = Date.parse(`${dateTo}T00:00:00Z`);
+  if (Number.isNaN(from) || Number.isNaN(to) || to < from) return 0;
+  return Math.floor((to - from) / ONE_DAY_MS) + 1;
+};
+
 const buildActivityTooltip = (cell: HeatmapCell, dailyAgentTokensByDate: DailyAgentTokensByDate): string => {
   const agentTotals = dailyAgentTokensByDate[cell.date];
 
@@ -158,11 +174,14 @@ const DashboardCharts = ({
   agentBreakdown,
   timeline,
   dailyAgentTokensByDate,
+  dailyAgentCostsByDate,
   topRepos,
   totalCostUsd,
   dailyAverageCostUsd,
   mostExpensiveDay,
 }: DashboardChartsProps) => {
+  const [selectedCostSource, setSelectedCostSource] = useState<CostSourceFilter>("all");
+
   const totalModelTokens = modelBreakdown.reduce((sum, row) => sum + row.tokens, 0);
   const modelRows = modelBreakdown.map((row, index) => ({
     ...row,
@@ -206,6 +225,48 @@ const DashboardCharts = ({
 
   const heatmap = buildHeatmap(timeline, dateFrom, dateTo);
   const heatmapWeeks = buildHeatmapWeeks(heatmap);
+  const dateSpanDays = rangeLengthDays(dateFrom, dateTo);
+
+  const costFilterOptions: Array<{ value: CostSourceFilter; label: string }> = [
+    { value: "all", label: "All" },
+    ...SESSION_SOURCES.map((source) => ({ value: source, label: SOURCE_LABELS[source] })),
+  ];
+
+  const costTimeline = useMemo<TimelinePoint[]>(() => {
+    if (selectedCostSource === "all") return timeline;
+
+    return timeline.map((point) => ({
+      ...point,
+      costUsd: dailyAgentCostsByDate[point.date]?.[selectedCostSource] ?? 0,
+    }));
+  }, [dailyAgentCostsByDate, selectedCostSource, timeline]);
+
+  const selectedTotalCostUsd =
+    selectedCostSource === "all"
+      ? totalCostUsd
+      : costTimeline.reduce((sum, point) => sum + point.costUsd, 0);
+
+  const selectedDailyAverageCostUsd =
+    selectedCostSource === "all"
+      ? dailyAverageCostUsd
+      : dateSpanDays > 0
+        ? selectedTotalCostUsd / dateSpanDays
+        : 0;
+
+  const selectedMostExpensiveDay =
+    selectedCostSource === "all"
+      ? mostExpensiveDay
+      : (() => {
+          const daysWithSpend = costTimeline.filter((point) => point.costUsd > 0);
+          if (daysWithSpend.length === 0) return null;
+          return daysWithSpend.reduce((max, point) => (point.costUsd > max.costUsd ? point : max), daysWithSpend[0]);
+        })();
+
+  const handleCostSourceChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const next = event.target.value;
+    if (!isCostSourceFilter(next)) return;
+    setSelectedCostSource(next);
+  };
 
   return (
     <>
@@ -389,32 +450,46 @@ const DashboardCharts = ({
             <p className="wrapped-kicker">Card 6</p>
             <h2 className="wrapped-title">Cost Breakdown</h2>
           </div>
-          <p className="text-sm text-slate-300">Spend trend across the year</p>
+          <label className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-slate-300">
+            Agent
+            <select
+              value={selectedCostSource}
+              onChange={handleCostSourceChange}
+              aria-label="Cost breakdown agent filter"
+              className="min-w-36 rounded-lg border border-white/20 bg-slate-950/65 px-3 py-2 text-sm font-medium normal-case tracking-normal text-slate-100 outline-none transition focus:border-sky-300"
+            >
+              {costFilterOptions.map((option) => (
+                <option key={option.value} value={option.value} className="bg-slate-950 text-slate-100">
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </header>
 
         <div className="grid gap-4 md:grid-cols-3">
           <article className="wrapped-tile">
             <p className="wrapped-label">Total Spend</p>
-            <p className="mt-2 text-4xl font-semibold text-white">{formatUsd(totalCostUsd)}</p>
+            <p className="mt-2 text-4xl font-semibold text-white">{formatUsd(selectedTotalCostUsd)}</p>
           </article>
           <article className="wrapped-tile">
             <p className="wrapped-label">Daily Average</p>
-            <p className="mt-2 text-3xl font-semibold text-white">{formatUsd(dailyAverageCostUsd)}</p>
+            <p className="mt-2 text-3xl font-semibold text-white">{formatUsd(selectedDailyAverageCostUsd)}</p>
           </article>
           <article className="wrapped-tile">
             <p className="wrapped-label">Most Expensive Day</p>
             <p className="mt-2 text-xl font-semibold text-white">
-              {mostExpensiveDay ? formatShortDate(mostExpensiveDay.date) : "-"}
+              {selectedMostExpensiveDay ? formatShortDate(selectedMostExpensiveDay.date) : "-"}
             </p>
             <p className="mt-1 text-sm text-slate-300">
-              {mostExpensiveDay ? formatUsd(mostExpensiveDay.costUsd) : "No cost data"}
+              {selectedMostExpensiveDay ? formatUsd(selectedMostExpensiveDay.costUsd) : "No cost data"}
             </p>
           </article>
         </div>
 
         <div className="mt-6 h-56 sm:h-64">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={timeline}>
+            <AreaChart data={costTimeline}>
               <defs>
                 <linearGradient id="costFill" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.55} />

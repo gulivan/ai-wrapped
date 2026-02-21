@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="icon.png" width="128" height="128" alt="AI Wrapped icon" />
+</p>
+
 # AI Wrapped
 
 Spotify Wrapped-style desktop dashboard for your AI coding agent activity. A visual summary across multiple agents.
