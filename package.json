@@ -1,5 +1,5 @@
 {
-  "name": "ai-stats",
+  "name": "ai-wrapped",
   "private": true,
   "scripts": {
     "dev": "vite build && electrobun dev --console",

@@ -312,7 +312,7 @@ const createMainWindow = () => {
   const url = devUrl && devUrl.trim().length > 0 ? devUrl : "views://mainview/index.html";
 
   const window = new BrowserWindow({
-    title: "AI Stats",
+    title: "AI Wrapped",
     frame: {
       x: 64,
       y: 64,
@@ -476,7 +476,7 @@ const refreshApplicationMenu = async () => {
     ...(isMac
       ? [
           {
-            label: "AI Stats",
+            label: "AI Wrapped",
             submenu: [
               { role: "about" },
               { type: "separator" },

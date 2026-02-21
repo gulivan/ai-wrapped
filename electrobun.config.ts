@@ -2,8 +2,8 @@ import type { ElectrobunConfig } from "electrobun";
 
 export default {
   app: {
-    name: "AI Stats",
-    identifier: "com.aistats.app",
+    name: "AI Wrapped",
+    identifier: "com.aiwrapped.app",
     version: "0.1.0",
   },
   runtime: {

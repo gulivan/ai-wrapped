@@ -1,6 +1,6 @@
-# AI Stats
+# AI Wrapped
 
-Desktop dashboard for AI coding agent session analytics. A Spotify Wrapped-style summary of your AI-assisted coding activity across multiple agents.
+Spotify Wrapped-style desktop dashboard for your AI coding agent activity. A visual summary across multiple agents.
 
 Built on [Electrobun](https://electrobun.dev) — a TypeScript-first desktop framework using Bun + native webviews.
 
@@ -30,7 +30,7 @@ Built on top of [agent-sessions](https://github.com/jazzyalex/agent-sessions) se
 - **Desktop**: [Electrobun](https://electrobun.dev) (native webview, no Chromium bundling on macOS)
 - **Frontend**: React + Tailwind CSS + Recharts
 - **Build**: Vite (frontend) + Electrobun CLI (app bundle)
-- **Storage**: JSON files in `~/.ai-stats/`
+- **Storage**: JSON files in `~/.ai-wrapped/`
 
 ## Getting Started
 

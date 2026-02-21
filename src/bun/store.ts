@@ -34,7 +34,7 @@ export interface DailyAggregateEntry {
 
 export type DailyStore = Record<string, DailyAggregateEntry>;
 
-const DATA_DIR = join(homedir(), ".ai-stats");
+const DATA_DIR = join(homedir(), ".ai-wrapped");
 const SCAN_STATE_PATH = join(DATA_DIR, "scan-state.json");
 const DAILY_PATH = join(DATA_DIR, "daily.json");
 const SETTINGS_PATH = join(DATA_DIR, "settings.json");

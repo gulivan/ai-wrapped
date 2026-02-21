@@ -3,7 +3,7 @@ const Sidebar = () => {
     <header className="pointer-events-none fixed inset-x-0 top-0 z-30 px-4 py-4 sm:px-6">
       <div className="pointer-events-auto mx-auto flex w-full max-w-6xl items-center justify-between rounded-full border border-white/15 bg-slate-950/45 px-5 py-3 backdrop-blur-xl">
         <div>
-          <p className="text-xs uppercase tracking-[0.22em] text-cyan-200/90">AI Stats</p>
+          <p className="text-xs uppercase tracking-[0.22em] text-cyan-200/90">AI Wrapped</p>
           <p className="text-sm font-medium tracking-tight text-white">Wrapped</p>
         </div>
 
