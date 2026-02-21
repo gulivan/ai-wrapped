@@ -4,7 +4,7 @@ Desktop dashboard for AI coding agent session analytics. A Spotify Wrapped-style
 
 Built on [Electrobun](https://electrobun.dev) — a TypeScript-first desktop framework using Bun + native webviews.
 
-Built on top of [agent-sessions](https://github.com/nicepkg/agent-sessions) session format discovery — reads JSONL/JSON session logs that AI coding agents write to disk.
+Built on top of [agent-sessions](https://github.com/jazzyalex/agent-sessions) session format discovery — reads JSONL/JSON session logs that AI coding agents write to disk.
 
 ## Supported Agents
 
