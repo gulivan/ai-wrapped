@@ -9,6 +9,7 @@ import { normalizeSession } from "./normalizer";
 import { parseFile } from "./parsers";
 import type { Session } from "./session-schema";
 import {
+  dailyStoreNeedsTimeZoneBackfill,
   readDailyStore,
   readScanState,
   writeAggregationMeta,
@@ -30,10 +31,12 @@ export interface ScanResult {
 
 export const runScan = async (options: ScanOptions = {}): Promise<ScanResult> => {
   const aggregationTimeZone = resolveAggregationTimeZone(options.timeZone);
+  const shouldFullScan =
+    Boolean(options.fullScan) || (await dailyStoreNeedsTimeZoneBackfill(aggregationTimeZone));
   const candidates = await discoverAll(options.sources);
   const scanState = await readScanState();
 
-  const changed = options.fullScan
+  const changed = shouldFullScan
     ? candidates
     : candidates.filter((candidate) => {
         const state = scanState[candidate.path];
@@ -73,7 +76,7 @@ export const runScan = async (options: ScanOptions = {}): Promise<ScanResult> =>
 
   await writeScanState(scanState);
 
-  if (options.fullScan) {
+  if (shouldFullScan) {
     await writeDailyStore(aggregateSessionsByDate(sessions, { timeZone: aggregationTimeZone }));
     await writeAggregationMeta(aggregationTimeZone);
   } else if (sessions.length > 0) {
