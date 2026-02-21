@@ -114,4 +114,12 @@ declare module "electrobun/bun" {
   export const PATHS: {
     VIEWS_FOLDER: string;
   };
+
+  const Electrobun: {
+    events: {
+      on: (name: string, handler: (event: unknown) => void) => void;
+    };
+  };
+
+  export default Electrobun;
 }

@@ -9,6 +9,9 @@ describe("external URL helpers", () => {
     expect(tryResolveAllowedExternalUrl("https://github.com/gulivan/ai-wrapped")).toBe(
       "https://github.com/gulivan/ai-wrapped",
     );
+    expect(tryResolveAllowedExternalUrl("https://ai-wrapped.com/share#abc123")).toBe(
+      "https://ai-wrapped.com/share#abc123",
+    );
     expect(tryResolveAllowedExternalUrl("https://user:pass@github.com/private")).toBeNull();
     expect(tryResolveAllowedExternalUrl("javascript:alert(1)")).toBeNull();
     expect(tryResolveAllowedExternalUrl("https://example.com")).toBeNull();

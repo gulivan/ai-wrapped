@@ -118,12 +118,16 @@ const Sidebar = ({
             }}
             disabled={shareBusy}
             className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-3 text-xs font-semibold text-slate-100 transition enabled:hover:border-cyan-200/70 enabled:hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm"
-            aria-label="Download screenshot of the current card"
+            aria-label="Share dashboard via link"
           >
             <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 16V4" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M8 8l4-4l4 4" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M14 3h7v7" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M10 14L21 3" strokeLinecap="round" strokeLinejoin="round" />
+              <path
+                d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             </svg>
             {shareBusy ? "Sharing..." : "Share"}
           </button>

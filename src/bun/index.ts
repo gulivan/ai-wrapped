@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import {
+import Electrobun, {
   ApplicationMenu,
   BrowserView,
   BrowserWindow,
@@ -20,6 +20,7 @@ import {
 } from "../shared/schema";
 import type { AppSettings, AIStatsRPC } from "../shared/types";
 import { runScan } from "./scan";
+import { resolveAggregationTimeZone } from "./aggregator";
 import {
   createEmptyDayStats,
   dailyStoreMissingHourDimension,
@@ -43,6 +44,10 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isMainViewReady = false;
 const pendingWebviewMessages: Array<() => void> = [];
+
+Electrobun.events.on("before-quit", () => {
+  isQuitting = true;
+});
 
 const addDayStats = (target: DayStats, source: DayStats): void => {
   target.sessions += source.sessions;
@@ -451,24 +456,6 @@ const createMainWindow = () => {
   }
 
   window.on("close", () => {
-    // On macOS, closing should behave like hide-to-tray when possible.
-    if (!isQuitting && isMac) {
-      try {
-        window.minimize();
-        queueMicrotask(() => {
-          if (mainWindow === window && !canUseWindow(window)) {
-            mainWindow = null;
-            isMainViewReady = false;
-            pendingWebviewMessages.length = 0;
-          }
-        });
-        void updateTrayMenu();
-        return;
-      } catch {
-        // If the native window was already closed, recreate lazily.
-      }
-    }
-
     if (mainWindow === window) {
       mainWindow = null;
       isMainViewReady = false;
@@ -598,8 +585,12 @@ const runScanWithNotifications = async (fullScan = false) => {
   });
 
   try {
-    const effectiveFullScan = fullScan || (await dailyStoreNeedsRepoBackfill()) || (await dailyStoreMissingHourDimension());
-    const result = await runScan({ fullScan: effectiveFullScan });
+    const aggregationTimeZone = resolveAggregationTimeZone();
+    const effectiveFullScan =
+      fullScan ||
+      (await dailyStoreNeedsRepoBackfill()) ||
+      (await dailyStoreMissingHourDimension());
+    const result = await runScan({ fullScan: effectiveFullScan, timeZone: aggregationTimeZone });
     lastScanAt = new Date().toISOString();
 
     dispatchToWebview(() => {

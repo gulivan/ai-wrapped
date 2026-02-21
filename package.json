@@ -7,6 +7,7 @@
     "type": "git",
     "url": "git+https://github.com/gulivan/ai-wrapped.git"
   },
+  "homepage": "https://ai-wrapped.com",
   "keywords": ["ai", "wrapped", "claude", "codex", "gemini", "copilot", "stats", "dashboard"],
   "bin": {
     "ai-wrapped": "bin/cli.ts"
@@ -30,6 +31,7 @@
     "dev": "bun run build && electrobun dev --console",
     "dev:hmr": "bun run build && concurrently \"vite --port 5173\" \"electrobun dev --console\"",
     "build": "vite build && electrobun build",
+    "build:share": "vite build --config vite.share.config.ts",
     "build:prod": "vite build && electrobun build --env=stable",
     "prepack": "vite build",
     "typecheck": "tsc -p tsconfig.typecheck.json --noEmit",
@@ -37,11 +39,12 @@
   },
   "dependencies": {
     "electrobun": "latest",
-    "html-to-image": "^1.11.13"
+    "lz-string": "^1.5.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "latest",
     "@types/bun": "latest",
+    "@types/lz-string": "^1.5.0",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",

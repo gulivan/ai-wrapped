@@ -2,9 +2,15 @@
   <img src="icon.png" width="128" height="128" alt="AI Wrapped icon" />
 </p>
 
-# AI Wrapped
+<h1 align="center">AI Wrapped</h1>
 
-Spotify Wrapped-style desktop dashboard for your AI coding agent activity. A visual summary across multiple agents.
+<p align="center">
+  Spotify Wrapped-style desktop dashboard for your AI coding agent activity.
+  <br />
+  <a href="https://ai-wrapped.com">ai-wrapped.com</a> · <a href="https://www.npmjs.com/package/ai-wrapped"><img src="https://img.shields.io/npm/v/ai-wrapped" alt="npm" /></a>
+</p>
+
+A visual summary across multiple agents.
 
 Built on [Electrobun](https://electrobun.dev) — a TypeScript-first desktop framework using Bun + native webviews.
 
@@ -25,8 +31,19 @@ Built on top of [agent-sessions](https://github.com/jazzyalex/agent-sessions) se
 - Daily activity timeline with per-agent and per-model breakdown
 - Cost breakdown by model (Claude Opus, Sonnet, GPT-4o, Gemini Pro, etc.)
 - Agent usage distribution (pie chart)
-- Active day coverage ring
+- Time spent — total hours, average session duration, longest session, current streak, active day coverage ring
+- Top repositories with sessions, tokens, cost, and duration
+- Coding hours — 24-hour activity breakdown by agent
+- Shareable dashboard links via [ai-wrapped.com/share](https://ai-wrapped.com/share)
 - System tray with today's stats at a glance
+
+## Install
+
+```bash
+bunx ai-wrapped
+```
+
+Flags: `--version`, `--rebuild`, `--uninstall`
 
 ## Stack
 
@@ -64,5 +81,5 @@ bun run build:prod
 
 1. On launch (and every 5 minutes by default), the app scans known session directories for each agent
 2. New or changed session files are parsed into a normalized format with token counts, tool calls, and cost estimates
-3. Aggregated daily stats are written to `~/.ai-stats/daily.json`
+3. Aggregated daily stats are written to `~/.ai-wrapped/daily.json`
 4. The frontend fetches summaries over RPC and renders the Wrapped-style dashboard

@@ -1,4 +1,11 @@
-const ALLOWED_EXTERNAL_HOSTS = new Set(["x.com", "www.x.com", "github.com", "www.github.com"]);
+const ALLOWED_EXTERNAL_HOSTS = new Set([
+  "x.com",
+  "www.x.com",
+  "github.com",
+  "www.github.com",
+  "ai-wrapped.com",
+  "www.ai-wrapped.com",
+]);
 
 export const tryResolveAllowedExternalUrl = (url: string): string | null => {
   try {

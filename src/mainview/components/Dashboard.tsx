@@ -4,13 +4,15 @@ import DashboardCharts from "./DashboardCharts";
 import EmptyState from "./EmptyState";
 import Sidebar from "./Sidebar";
 import StatsCards, { AnimatedNumber } from "./StatsCards";
+import { useRPC } from "../hooks/useRPC";
 import { useDashboardData, type DashboardDateRange } from "../hooks/useDashboardData";
 import { SOURCE_LABELS } from "../lib/constants";
 import { formatDate, formatDuration, formatNumber } from "../lib/formatters";
-import { buildCardDownloadName, downloadBlobAsFile, resolveCurrentCardIndex } from "../lib/shareCard";
+import { encodeShareData, type SharePayload } from "@shared/shareData";
 
 const clampPercentage = (value: number): number => Math.max(0, Math.min(100, value));
 const CARD_ANIMATION_MS = 2000;
+const MAX_SHARE_HASH_LENGTH = 60000;
 type CostAgentFilter = "all" | SessionSource;
 type CostGroupBy = "none" | "by-agent" | "by-model";
 
@@ -21,6 +23,7 @@ const isCostAgentFilter = (value: string): value is CostAgentFilter =>
   value === "all" || SESSION_SOURCES.includes(value as SessionSource);
 
 const Dashboard = () => {
+  const rpc = useRPC();
   const {
     dateFrom,
     dateTo,
@@ -116,27 +119,54 @@ const Dashboard = () => {
 
   const handleShareCard = async () => {
     if (isSharingCard) return;
-
-    const root = scrollRef.current;
-    if (!root) return;
-
-    const currentCardIndex = resolveCurrentCardIndex(activeCardRef.current, activeCardIndex);
-    const card = root.querySelector<HTMLElement>(`[data-card-index="${currentCardIndex}"]`);
-    if (!card) return;
+    if (!summary) return;
 
     setIsSharingCard(true);
     try {
-      const { toBlob } = await import("html-to-image");
-      const blob = await toBlob(card, {
-        cacheBust: true,
-        pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
-      });
-      if (!blob) return;
+      const payload: SharePayload = {
+        v: 1,
+        range: selectedRange,
+        dateFrom,
+        dateTo,
+        totalSessions: totals.totalSessions,
+        totalCostUsd: totals.totalCostUsd,
+        totalTokens: totals.totalTokens,
+        totalToolCalls: summary.totals.toolCalls,
+        totalDurationMs: totals.totalDurationMs,
+        averageSessionDurationMs: totals.averageSessionDurationMs,
+        longestSessionEstimateMs: totals.longestSessionEstimateMs,
+        currentStreakDays: totals.currentStreakDays,
+        currentStreakStartDate: totals.currentStreakStartDate,
+        activeDays: totals.activeDays,
+        dateSpanDays: totals.dateSpanDays,
+        modelBreakdown,
+        agentBreakdown,
+        timeline,
+        dailyAgentTokensByDate,
+        dailyAgentCostsByDate,
+        dailyModelCostsByDate,
+        dailyAverageCostUsd: totals.dailyAverageCostUsd,
+        mostExpensiveDay: totals.mostExpensiveDay,
+        topRepos,
+        hourlyBreakdown,
+        weekendSessionPercent,
+        busiestDayOfWeek,
+        busiestSingleDay,
+      };
 
-      const download = buildCardDownloadName(currentCardIndex);
-      downloadBlobAsFile(blob, download);
+      const encoded = encodeShareData(payload);
+      if (!encoded || encoded.length > MAX_SHARE_HASH_LENGTH) {
+        throw new Error(`Encoded share payload exceeds safe URL length (${encoded.length} chars)`);
+      }
+
+      rpc.send.openExternal({
+        url: `https://ai-wrapped.com/share#${encoded}`,
+      });
     } catch (caught) {
-      console.error("Failed to export current card image", caught);
+      const message =
+        caught instanceof Error ? caught.message : "Failed to share dashboard by URL";
+      console.error("Failed to share dashboard by URL", caught);
+      window.alert(message);
     } finally {
       setIsSharingCard(false);
     }
