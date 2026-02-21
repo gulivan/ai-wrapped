@@ -46,4 +46,42 @@ describe("aggregateSessionsByDate", () => {
     expect(entry?.byRepo["other-repo"]?.costUsd).toBe(2);
     expect(entry?.totals.sessions).toBe(4);
   });
+
+  test("tracks per-hour totals in byHour using startTime or parsedAt", () => {
+    const daily = aggregateSessionsByDate([
+      makeSession({
+        id: "h1",
+        startTime: "2026-02-21T10:10:00.000Z",
+        parsedAt: "2026-02-21T10:30:00.000Z",
+      }),
+      makeSession({
+        id: "h2",
+        startTime: null,
+        parsedAt: "2026-02-21T13:40:00.000Z",
+      }),
+    ]);
+
+    const entry = daily["2026-02-21"];
+    expect(entry).toBeDefined();
+    expect(entry?.byHour["10"]?.sessions).toBe(1);
+    expect(entry?.byHour["13"]?.sessions).toBe(1);
+    expect(entry?.totals.sessions).toBe(2);
+  });
+
+  test("uses UTC consistently for day and hour buckets", () => {
+    const daily = aggregateSessionsByDate([
+      makeSession({
+        id: "tz-1",
+        startTime: "2026-02-21T00:30:00+09:00",
+        parsedAt: "2026-02-21T00:45:00+09:00",
+      }),
+    ]);
+
+    const entry = daily["2026-02-20"];
+    expect(entry).toBeDefined();
+    expect(entry?.byHour["15"]?.sessions).toBe(1);
+    expect(entry?.byHourSource["15"]?.codex?.sessions).toBe(1);
+    expect(entry?.totals.sessions).toBe(1);
+    expect(daily["2026-02-21"]).toBeUndefined();
+  });
 });

@@ -13,6 +13,9 @@ interface SidebarProps {
   costGroupOptions: Array<{ value: string; label: string }>;
   onCostGroupByChange: (event: ChangeEvent<HTMLSelectElement>) => void;
   costAgentDisabled: boolean;
+  onShareCard: () => void | Promise<void>;
+  shareBusy: boolean;
+  isScanning: boolean;
 }
 
 const openExternal = (rpc: ReturnType<typeof useRPC>, url: string) => (e: MouseEvent) => {
@@ -32,14 +35,23 @@ const Sidebar = ({
   costGroupOptions,
   onCostGroupByChange,
   costAgentDisabled,
+  onShareCard,
+  shareBusy,
+  isScanning,
 }: SidebarProps) => {
   const rpc = useRPC();
 
   return (
     <header className="pointer-events-none fixed inset-x-0 top-0 z-30 px-4 py-4 sm:px-6">
       <div className="pointer-events-auto mx-auto flex w-full max-w-6xl items-center justify-between gap-3 rounded-full border border-white/15 bg-slate-950/45 px-4 py-3 backdrop-blur-xl sm:px-5">
-        <div>
+        <div className="flex items-center gap-2">
           <p className="text-xs uppercase tracking-[0.22em] text-cyan-200/90">AI Wrapped</p>
+          {isScanning && (
+            <span className="flex items-center gap-1.5 text-[0.6rem] uppercase tracking-[0.14em] text-cyan-300/80">
+              <span className="scanning-dot" />
+              Scanning...
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
@@ -98,6 +110,23 @@ const Sidebar = ({
               </select>
             </>
           ) : null}
+
+          <button
+            type="button"
+            onClick={() => {
+              void onShareCard();
+            }}
+            disabled={shareBusy}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-3 text-xs font-semibold text-slate-100 transition enabled:hover:border-cyan-200/70 enabled:hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm"
+            aria-label="Download screenshot of the current card"
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 16V4" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M8 8l4-4l4 4" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            {shareBusy ? "Sharing..." : "Share"}
+          </button>
 
           <button
             type="button"

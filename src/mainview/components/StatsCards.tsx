@@ -45,7 +45,7 @@ export const AnimatedNumber = ({
 
   useEffect(() => {
     if (!animate) {
-      setDisplayValue(0);
+      setDisplayValue(value);
       return;
     }
 
@@ -83,9 +83,16 @@ interface StatsCardsProps {
   totalCostUsd: number;
   totalTokens: number;
   totalToolCalls: number;
+  animateOnMount?: boolean;
 }
 
-const StatsCards = ({ totalSessions, totalCostUsd, totalTokens, totalToolCalls }: StatsCardsProps) => {
+const StatsCards = ({
+  totalSessions,
+  totalCostUsd,
+  totalTokens,
+  totalToolCalls,
+  animateOnMount = true,
+}: StatsCardsProps) => {
   const { ref, visible } = useInView<HTMLDivElement>(0.35);
 
   const stats = useMemo(
@@ -106,7 +113,8 @@ const StatsCards = ({ totalSessions, totalCostUsd, totalTokens, totalToolCalls }
           <AnimatedNumber
             value={stat.value}
             format={stat.format}
-            animate={visible}
+            durationMs={2000}
+            animate={visible && animateOnMount}
             className="mt-2 block text-3xl font-semibold tracking-tight text-white sm:text-4xl"
           />
         </article>

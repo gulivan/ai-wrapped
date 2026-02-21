@@ -19,12 +19,38 @@ const addStats = (target: DayStats, source: DayStats): void => {
   target.durationMs += source.durationMs;
 };
 
-const toDayKey = (session: Session): string => {
+const parseSessionTimestamp = (session: Session): Date | null => {
   const timestamp = session.startTime ?? session.parsedAt;
-  if (typeof timestamp === "string" && timestamp.length >= 10) {
-    return timestamp.slice(0, 10);
+  if (typeof timestamp !== "string" || timestamp.length < 10) {
+    return null;
   }
+
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed;
+};
+
+const toDayKey = (session: Session): string => {
+  const parsed = parseSessionTimestamp(session);
+  if (parsed) {
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  const fallback = session.startTime ?? session.parsedAt;
+  if (typeof fallback === "string" && fallback.length >= 10) {
+    return fallback.slice(0, 10);
+  }
+
   return new Date().toISOString().slice(0, 10);
+};
+
+const toHourKey = (session: Session): string | null => {
+  const parsed = parseSessionTimestamp(session);
+  if (!parsed) return null;
+  return String(parsed.getUTCHours()).padStart(2, "0");
 };
 
 const toSessionStats = (session: Session): DayStats => ({
@@ -56,6 +82,8 @@ const ensureDateEntry = (daily: DailyStore, date: string): DailyAggregateEntry =
     bySource: {},
     byModel: {},
     byRepo: {},
+    byHour: {},
+    byHourSource: {},
     totals: createEmptyDayStats(),
   };
   daily[date] = created;
@@ -77,10 +105,17 @@ const sortDailyStore = (daily: DailyStore): DailyStore => {
 
   for (const date of sortedDates) {
     const entry = daily[date] as DailyAggregateEntry;
+    const sortedByHourSource: Record<string, Record<string, DayStats>> = {};
+    for (const [hour, sources] of Object.entries(sortedEntries(entry.byHourSource))) {
+      sortedByHourSource[hour] = sortedEntries(sources);
+    }
+
     output[date] = {
       bySource: sortedEntries(entry.bySource),
       byModel: sortedEntries(entry.byModel),
       byRepo: sortedEntries(entry.byRepo),
+      byHour: sortedEntries(entry.byHour),
+      byHourSource: sortedByHourSource,
       totals: { ...entry.totals },
     };
   }
@@ -108,10 +143,27 @@ export const aggregateSessionsByDate = (sessions: Session[]): DailyStore => {
       entry.byRepo[repoKey] = createEmptyDayStats();
     }
 
+    const hourKey = toHourKey(session);
+    if (hourKey !== null) {
+      if (!entry.byHour[hourKey]) {
+        entry.byHour[hourKey] = createEmptyDayStats();
+      }
+      if (!entry.byHourSource[hourKey]) {
+        entry.byHourSource[hourKey] = {};
+      }
+      if (!entry.byHourSource[hourKey][session.source]) {
+        entry.byHourSource[hourKey][session.source] = createEmptyDayStats();
+      }
+    }
+
     addStats(entry.bySource[session.source] as DayStats, stats);
     addStats(entry.byModel[modelKey] as DayStats, stats);
     if (repoKey) {
       addStats(entry.byRepo[repoKey] as DayStats, stats);
+    }
+    if (hourKey !== null) {
+      addStats(entry.byHour[hourKey] as DayStats, stats);
+      addStats(entry.byHourSource[hourKey][session.source] as DayStats, stats);
     }
     addStats(entry.totals, stats);
   }

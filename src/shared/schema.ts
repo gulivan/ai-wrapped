@@ -32,6 +32,22 @@ export interface DailyAggregate {
   totalDurationMs: number;
 }
 
+export interface HourlyAgentEntry {
+  source: SessionSource;
+  sessions: number;
+  tokens: TokenUsage;
+  costUsd: number;
+}
+
+export interface HourlyBreakdownEntry {
+  hour: number;
+  sessions: number;
+  tokens: TokenUsage;
+  costUsd: number;
+  durationMs: number;
+  byAgent: HourlyAgentEntry[];
+}
+
 export interface DashboardSummary {
   totals: {
     sessions: number;
@@ -58,8 +74,9 @@ export interface DashboardSummary {
     costUsd: number;
   }>;
   dailyTimeline: DailyAggregate[];
-  topRepos: Array<{ repo: string; sessions: number; costUsd: number }>;
+  topRepos: Array<{ repo: string; sessions: number; tokens: number; costUsd: number; durationMs: number }>;
   topTools: Array<{ tool: string; count: number }>;
+  hourlyBreakdown: HourlyBreakdownEntry[];
 }
 
 export interface TrayStats {

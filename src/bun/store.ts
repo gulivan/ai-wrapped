@@ -30,6 +30,8 @@ export interface DailyAggregateEntry {
   bySource: Record<string, DayStats>;
   byModel: Record<string, DayStats>;
   byRepo: Record<string, DayStats>;
+  byHour: Record<string, DayStats>;
+  byHourSource: Record<string, Record<string, DayStats>>;
   totals: DayStats;
 }
 
@@ -146,10 +148,30 @@ const normalizeDailyStore = (value: unknown): DailyStore => {
       }
     }
 
+    const byHour: Record<string, DayStats> = {};
+    if (isRecord(rawEntry.byHour)) {
+      for (const [hour, rawStats] of Object.entries(rawEntry.byHour)) {
+        byHour[hour] = normalizeDayStats(rawStats);
+      }
+    }
+
+    const byHourSource: Record<string, Record<string, DayStats>> = {};
+    if (isRecord(rawEntry.byHourSource)) {
+      for (const [hour, rawSources] of Object.entries(rawEntry.byHourSource)) {
+        if (!isRecord(rawSources)) continue;
+        byHourSource[hour] = {};
+        for (const [source, rawStats] of Object.entries(rawSources)) {
+          byHourSource[hour][source] = normalizeDayStats(rawStats);
+        }
+      }
+    }
+
     output[date] = {
       bySource,
       byModel,
       byRepo,
+      byHour,
+      byHourSource,
       totals: normalizeDayStats(rawEntry.totals),
     };
   }
@@ -259,6 +281,49 @@ export const dailyStoreMissingRepoDimension = async (): Promise<boolean> => {
   }
 
   return false;
+};
+
+export const rawDailyStoreMissingHourDimension = (raw: unknown): boolean => {
+  if (!isRecord(raw)) {
+    return false;
+  }
+
+  for (const rawEntry of Object.values(raw)) {
+    if (!isRecord(rawEntry)) {
+      continue;
+    }
+
+    const totals = isRecord(rawEntry.totals) ? rawEntry.totals : null;
+    const hasSessions = totals && typeof totals.sessions === "number" && totals.sessions > 0;
+    if (!hasSessions) {
+      continue;
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(rawEntry, "byHour")) {
+      return true;
+    }
+
+    const byHour = rawEntry.byHour;
+    if (!isRecord(byHour)) {
+      return true;
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(rawEntry, "byHourSource")) {
+      return true;
+    }
+
+    const byHourSource = rawEntry.byHourSource;
+    if (!isRecord(byHourSource)) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+export const dailyStoreMissingHourDimension = async (): Promise<boolean> => {
+  const raw = await readJson<unknown>(DAILY_PATH, {});
+  return rawDailyStoreMissingHourDimension(raw);
 };
 
 export const getSettings = async (): Promise<AppSettings> => {

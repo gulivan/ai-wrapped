@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { SESSION_SOURCES, type SessionSource } from "@shared/schema";
 import DashboardCharts from "./DashboardCharts";
 import EmptyState from "./EmptyState";
@@ -7,8 +7,10 @@ import StatsCards, { AnimatedNumber } from "./StatsCards";
 import { useDashboardData, type DashboardDateRange } from "../hooks/useDashboardData";
 import { SOURCE_LABELS } from "../lib/constants";
 import { formatDate, formatDuration, formatNumber } from "../lib/formatters";
+import { buildCardDownloadName, downloadBlobAsFile, resolveCurrentCardIndex } from "../lib/shareCard";
 
 const clampPercentage = (value: number): number => Math.max(0, Math.min(100, value));
+const CARD_ANIMATION_MS = 2000;
 type CostAgentFilter = "all" | SessionSource;
 type CostGroupBy = "none" | "by-agent" | "by-model";
 
@@ -27,6 +29,7 @@ const Dashboard = () => {
     loading,
     error,
     refresh,
+    isScanning,
     totals,
     modelBreakdown,
     agentBreakdown,
@@ -37,12 +40,41 @@ const Dashboard = () => {
     dailyAgentTokensByDate,
     dailyAgentCostsByDate,
     dailyModelCostsByDate,
+    hourlyBreakdown,
+    weekendSessionPercent,
+    busiestDayOfWeek,
+    busiestSingleDay,
   } = useDashboardData();
   const [costAgentFilter, setCostAgentFilter] = useState<CostAgentFilter>("all");
   const [costGroupBy, setCostGroupBy] = useState<CostGroupBy>("none");
   const [activeCardIndex, setActiveCardIndex] = useState<number>(1);
+  const [animatingCardIndices, setAnimatingCardIndices] = useState<Record<number, boolean>>({});
+  const [isSharingCard, setIsSharingCard] = useState<boolean>(false);
   const activeCardRef = useRef<number>(1);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const animatedCardIndicesRef = useRef<Set<number>>(new Set());
+  const animationTimeoutByCardRef = useRef<Record<number, number>>({});
+  const prefersReducedMotionRef = useRef<boolean>(false);
+
+  const startCardAnimation = useCallback((index: number) => {
+    if (index <= 0 || prefersReducedMotionRef.current) return;
+
+    const existingTimeoutId = animationTimeoutByCardRef.current[index];
+    if (existingTimeoutId) {
+      window.clearTimeout(existingTimeoutId);
+    }
+
+    setAnimatingCardIndices((current) => ({ ...current, [index]: true }));
+    animationTimeoutByCardRef.current[index] = window.setTimeout(() => {
+      setAnimatingCardIndices((current) => {
+        if (!current[index]) return current;
+        const nextAnimations = { ...current };
+        delete nextAnimations[index];
+        return nextAnimations;
+      });
+      delete animationTimeoutByCardRef.current[index];
+    }, CARD_ANIMATION_MS);
+  }, []);
 
   const handleRangeChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const next = event.target.value as DashboardDateRange;
@@ -82,6 +114,43 @@ const Dashboard = () => {
     }
   };
 
+  const handleShareCard = async () => {
+    if (isSharingCard) return;
+
+    const root = scrollRef.current;
+    if (!root) return;
+
+    const currentCardIndex = resolveCurrentCardIndex(activeCardRef.current, activeCardIndex);
+    const card = root.querySelector<HTMLElement>(`[data-card-index="${currentCardIndex}"]`);
+    if (!card) return;
+
+    setIsSharingCard(true);
+    try {
+      const { toBlob } = await import("html-to-image");
+      const blob = await toBlob(card, {
+        cacheBust: true,
+        pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+      });
+      if (!blob) return;
+
+      const download = buildCardDownloadName(currentCardIndex);
+      downloadBlobAsFile(blob, download);
+    } catch (caught) {
+      console.error("Failed to export current card image", caught);
+    } finally {
+      setIsSharingCard(false);
+    }
+  };
+
+  useEffect(() => {
+    prefersReducedMotionRef.current = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    return () => {
+      for (const timeoutId of Object.values(animationTimeoutByCardRef.current)) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     const root = scrollRef.current;
     if (!root) return;
@@ -91,6 +160,16 @@ const Dashboard = () => {
 
     const observer = new IntersectionObserver(
       (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+
+          const index = Number((entry.target as HTMLElement).dataset.cardIndex ?? 0);
+          if (index <= 0 || animatedCardIndicesRef.current.has(index)) continue;
+
+          animatedCardIndicesRef.current.add(index);
+          startCardAnimation(index);
+        }
+
         const next = entries
           .filter((entry) => entry.isIntersecting)
           .map((entry) => ({
@@ -116,7 +195,23 @@ const Dashboard = () => {
     }
 
     return () => observer.disconnect();
-  }, [summary, error]);
+  }, [summary, error, startCardAnimation]);
+
+  useEffect(() => {
+    animatedCardIndicesRef.current.clear();
+
+    for (const timeoutId of Object.values(animationTimeoutByCardRef.current)) {
+      window.clearTimeout(timeoutId);
+    }
+    animationTimeoutByCardRef.current = {};
+    setAnimatingCardIndices({});
+
+    const currentCardIndex = activeCardRef.current > 0 ? activeCardRef.current : 1;
+    if (currentCardIndex > 0) {
+      animatedCardIndicesRef.current.add(currentCardIndex);
+      startCardAnimation(currentCardIndex);
+    }
+  }, [selectedRange, costGroupBy, costAgentFilter, startCardAnimation]);
 
   const sidebar = (
     <Sidebar
@@ -131,6 +226,9 @@ const Dashboard = () => {
       onCostGroupByChange={handleCostGroupByChange}
       costGroupOptions={costGroupOptions}
       costAgentDisabled={costGroupBy === "by-model"}
+      onShareCard={handleShareCard}
+      shareBusy={isSharingCard}
+      isScanning={isScanning}
     />
   );
 
@@ -201,6 +299,8 @@ const Dashboard = () => {
 
     return { kicker: "Your Time In Code", title: "Your AI Coding Story" };
   })();
+  const animateCard1 = Boolean(animatingCardIndices[1]);
+  const animateCard2 = Boolean(animatingCardIndices[2]);
 
   return (
     <>
@@ -221,13 +321,13 @@ const Dashboard = () => {
               totalCostUsd={totals.totalCostUsd}
               totalTokens={totals.totalTokens}
               totalToolCalls={summary?.totals.toolCalls ?? 0}
+              animateOnMount={animateCard1}
             />
           </section>
 
           <section data-card-index="2" className="wrapped-card wrapped-card-time">
             <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
               <div>
-                <p className="wrapped-kicker">Card 2</p>
                 <h2 className="wrapped-title">Time Spent Coding with AI</h2>
               </div>
               <p className="text-sm text-slate-300">Active on {formatNumber(totals.activeDays)} days</p>
@@ -239,7 +339,8 @@ const Dashboard = () => {
                   <p className="wrapped-label">Total Hours</p>
                   <AnimatedNumber
                     value={totalHours}
-                    animate={true}
+                    animate={animateCard2}
+                    durationMs={CARD_ANIMATION_MS}
                     format={(value) => `${value.toFixed(1)}h`}
                     className="mt-2 block text-4xl font-semibold text-white"
                   />
@@ -248,22 +349,38 @@ const Dashboard = () => {
 
                 <article className="wrapped-tile">
                   <p className="wrapped-label">Average Session</p>
-                  <p className="mt-2 text-3xl font-semibold text-white">{formatDuration(totals.averageSessionDurationMs)}</p>
+                  <AnimatedNumber
+                    value={totals.averageSessionDurationMs}
+                    animate={animateCard2}
+                    durationMs={CARD_ANIMATION_MS}
+                    format={(value) => formatDuration(Math.max(0, Math.round(value)))}
+                    className="mt-2 block text-3xl font-semibold text-white"
+                  />
                   <p className="mt-2 text-xs text-slate-300">Per session across the full range</p>
                 </article>
 
                 <article className="wrapped-tile sm:col-span-2">
                   <p className="wrapped-label">Longest Session Highlight</p>
-                  <p className="mt-2 text-3xl font-semibold text-white">
-                    {formatDuration(totals.longestSessionEstimateMs)}
-                  </p>
+                  <AnimatedNumber
+                    value={totals.longestSessionEstimateMs}
+                    animate={animateCard2}
+                    durationMs={CARD_ANIMATION_MS}
+                    format={(value) => formatDuration(Math.max(0, Math.round(value)))}
+                    className="mt-2 block text-3xl font-semibold text-white"
+                  />
                   <p className="mt-2 text-xs text-slate-300">Estimated from daily totals and session counts</p>
                 </article>
 
                 <article className="wrapped-tile sm:col-span-2">
                   <p className="wrapped-label">Current Streak 🔥</p>
                   <p className="mt-2 text-3xl font-semibold text-white">
-                    {formatNumber(totals.currentStreakDays)} {totals.currentStreakDays === 1 ? "day" : "days"}
+                    <AnimatedNumber
+                      value={totals.currentStreakDays}
+                      animate={animateCard2}
+                      durationMs={CARD_ANIMATION_MS}
+                      format={(value) => formatNumber(Math.max(0, Math.round(value)))}
+                    />{" "}
+                    {totals.currentStreakDays === 1 ? "day" : "days"}
                   </p>
                   <p className="mt-2 text-xs text-slate-300">
                     {totals.currentStreakStartDate
@@ -309,7 +426,8 @@ const Dashboard = () => {
 
                 <AnimatedNumber
                   value={activeDayCoverage}
-                  animate={true}
+                  animate={animateCard2}
+                  durationMs={CARD_ANIMATION_MS}
                   format={(value) => `${value.toFixed(1)}%`}
                   className="mt-4 block text-4xl font-semibold text-white"
                 />
@@ -333,6 +451,11 @@ const Dashboard = () => {
             mostExpensiveDay={totals.mostExpensiveDay}
             costAgentFilter={costAgentFilter}
             costGroupBy={costGroupBy}
+            cardAnimations={animatingCardIndices}
+            hourlyBreakdown={hourlyBreakdown}
+            weekendSessionPercent={weekendSessionPercent}
+            busiestDayOfWeek={busiestDayOfWeek}
+            busiestSingleDay={busiestSingleDay}
           />
         </div>
       </div>

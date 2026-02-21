@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, type CSSProperties, type ReactNode } from "react";
 import { SESSION_SOURCES, type SessionSource } from "@shared/schema";
 import {
   Area,
@@ -14,13 +14,19 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { formatDate, formatNumber, formatTokens, formatUsd } from "../lib/formatters";
+import type { TooltipContentProps } from "recharts";
+import { AnimatedNumber } from "./StatsCards";
+import { formatDate, formatDuration, formatNumber, formatTokens, formatUsd } from "../lib/formatters";
+import { formatHourLabel, hasHourlyActivity } from "../lib/hourly";
+import { computeHeatmapCellSizePx } from "../lib/heatmap";
 import { SOURCE_COLORS, SOURCE_LABELS } from "../lib/constants";
 import type {
   AgentBreakdown,
+  BusiestSingleDay,
   DailyAgentCostsByDate,
   DailyModelCostsByDate,
   DailyAgentTokensByDate,
+  HourlyDataPoint,
   ModelBreakdown,
   TimelinePoint,
 } from "../hooks/useDashboardData";
@@ -37,12 +43,17 @@ interface DashboardChartsProps {
   dailyAgentTokensByDate: DailyAgentTokensByDate;
   dailyAgentCostsByDate: DailyAgentCostsByDate;
   dailyModelCostsByDate: DailyModelCostsByDate;
-  topRepos: Array<{ repo: string; sessions: number; costUsd: number }>;
+  topRepos: TopRepoRow[];
   totalCostUsd: number;
   dailyAverageCostUsd: number;
   mostExpensiveDay: TimelinePoint | null;
   costAgentFilter: CostSourceFilter;
   costGroupBy: CostGroupBy;
+  cardAnimations: Record<number, boolean>;
+  hourlyBreakdown: HourlyDataPoint[];
+  weekendSessionPercent: number;
+  busiestDayOfWeek: string;
+  busiestSingleDay: BusiestSingleDay | null;
 }
 
 interface HeatmapCell {
@@ -55,8 +66,62 @@ interface HeatmapCell {
 
 type HeatmapWeek = Array<HeatmapCell | null>;
 type CostSeriesPoint = { date: string } & Record<string, string | number>;
+type AgentChartSource = SessionSource | "other";
+
+interface AgentChartRow {
+  source: AgentChartSource;
+  label: string;
+  sessions: number;
+  tokens: number;
+  costUsd: number;
+  color: string;
+  percentage: number;
+  icon: ReactNode;
+}
+
+interface AgentTooltipPayloadItem {
+  payload?: AgentChartRow;
+}
+
+interface AgentPieTooltipProps {
+  active?: boolean;
+  payload?: AgentTooltipPayloadItem[];
+}
+
+interface TopRepoRow {
+  repo: string;
+  sessions: number;
+  tokens: number;
+  costUsd: number;
+  durationMs: number;
+}
 
 const MODEL_COLORS = ["#22d3ee", "#3b82f6", "#14b8a6", "#0ea5e9", "#06b6d4", "#38bdf8", "#34d399", "#67e8f9"];
+
+interface CodingPersonality {
+  label: string;
+  emoji: string;
+  description: string;
+}
+
+const classifyCodingPersonality = (peakHour: number): CodingPersonality => {
+  if (peakHour >= 22 || peakHour <= 3) {
+    return { label: "Night Owl", emoji: "\uD83E\uDD89", description: "You do your best work when the world sleeps." };
+  }
+  if (peakHour <= 8) {
+    return { label: "Early Bird", emoji: "\uD83C\uDF05", description: "You catch bugs before others catch coffee." };
+  }
+  if (peakHour <= 11) {
+    return { label: "Morning Grinder", emoji: "\u2600\uFE0F", description: "Peak productivity in the morning hours." };
+  }
+  if (peakHour <= 17) {
+    return { label: "Afternoon Warrior", emoji: "\u2615", description: "Post-lunch is when your focus peaks." };
+  }
+  if (peakHour <= 21) {
+    return { label: "Evening Hacker", emoji: "\uD83C\uDF19", description: "Sunset coding sessions are your thing." };
+  }
+  return { label: "Night Owl", emoji: "\uD83E\uDD89", description: "You do your best work when the world sleeps." };
+};
 
 const AgentIconSvg = ({ d }: { d: string }) => (
   <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" className="inline-block align-[-0.125em]">
@@ -127,6 +192,8 @@ const buildHeatmapWeeks = (cells: HeatmapCell[]): HeatmapWeek[] => {
 };
 
 const chartWrapperClass = "h-56 w-full sm:h-64";
+const chartRevealClass = "wrapped-chart-reveal";
+const CHART_ANIMATION_MS = 2000;
 
 const formatTokensTooltipWithValue = (value: number | string | undefined) => {
   const numericValue = typeof value === "number" ? value : Number(value ?? 0);
@@ -136,10 +203,55 @@ const formatTokensTooltipWithValue = (value: number | string | undefined) => {
 const formatUsdTooltip = (value: number | string | undefined) =>
   formatUsd(typeof value === "number" ? value : Number(value ?? 0));
 
-const formatNumberTooltip = (value: number | string | undefined) =>
-  formatNumber(typeof value === "number" ? value : Number(value ?? 0));
-
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+const AgentPieTooltip = ({ active, payload }: AgentPieTooltipProps) => {
+  const row = payload?.[0]?.payload;
+  if (!active || !row) return null;
+
+  const averageTokensPerSession = row.sessions > 0 ? row.tokens / row.sessions : 0;
+
+  return (
+    <div className="rounded-xl border border-slate-400/45 bg-slate-950/95 px-3 py-2 shadow-2xl">
+      <p className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+        <span className="text-base leading-none" style={{ color: row.color }}>
+          {row.icon}
+        </span>
+        <span>{row.label}</span>
+      </p>
+      <p className="mt-1 text-xs text-slate-200">Tokens: {formatTokens(row.tokens)} ({formatNumber(row.tokens)})</p>
+      <p className="text-xs text-slate-300">
+        Sessions: {formatNumber(row.sessions)} · Token share: {row.percentage.toFixed(1)}%
+      </p>
+      <p className="text-xs text-slate-300">Spend: {formatUsd(row.costUsd)}</p>
+      <p className="text-xs text-slate-400">Avg/session: {formatTokens(averageTokensPerSession)}</p>
+    </div>
+  );
+};
+
+const HourlyBarTooltip = ({ active, payload }: { active?: boolean; payload?: Array<{ payload?: HourlyDataPoint }> }) => {
+  const row = payload?.[0]?.payload;
+  if (!active || !row) return null;
+
+  return (
+    <div className="rounded-xl border border-slate-400/45 bg-slate-950/95 px-3 py-2 shadow-2xl">
+      <p className="text-sm font-semibold text-slate-100">{row.label}</p>
+      <p className="mt-1 text-xs text-slate-200">Tokens: {formatTokens(row.tokens)} ({formatNumber(row.tokens)})</p>
+      <p className="text-xs text-slate-300">Cost: {formatUsd(row.costUsd)}</p>
+      <p className="text-xs text-slate-300">Sessions: {formatNumber(row.sessions)}</p>
+      {row.byAgent.length > 0 && (
+        <div className="mt-1.5 border-t border-slate-700/60 pt-1.5">
+          {row.byAgent.map((a) => (
+            <p key={a.source} className="flex items-center justify-between gap-3 text-xs text-slate-300">
+              <span style={{ color: SOURCE_COLORS[a.source] ?? "#94a3b8" }}>{a.label}</span>
+              <span className="text-slate-400">{formatTokens(a.tokens)} · {formatUsd(a.costUsd)} · {formatNumber(a.sessions)}s</span>
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const rangeLengthDays = (dateFrom: string, dateTo: string): number => {
   const from = Date.parse(`${dateFrom}T00:00:00Z`);
@@ -170,6 +282,30 @@ const buildActivityTooltip = (cell: HeatmapCell, dailyAgentTokensByDate: DailyAg
   return `${formatDate(cell.date)}\n${lines.join("\n")}`;
 };
 
+const buildRepoHoverDetails = (repo: TopRepoRow): string =>
+  [
+    repo.repo,
+    `Sessions: ${formatNumber(repo.sessions)}`,
+    `Tokens: ${formatTokens(repo.tokens)} (${formatNumber(repo.tokens)})`,
+    `Spend: ${formatUsd(repo.costUsd)}`,
+    `Time active: ${formatDuration(repo.durationMs)}`,
+  ].join("\n");
+
+const renderTopReposTooltip = ({ active, payload, label }: TooltipContentProps<number, string>) => {
+  const row = payload?.[0]?.payload as TopRepoRow | undefined;
+  if (!active || !row) return null;
+
+  return (
+    <div className="rounded-xl border border-white/20 bg-slate-950/95 px-3 py-2 text-xs text-slate-100 shadow-xl">
+      <p className="mb-1 text-sm font-semibold text-white">{typeof label === "string" ? label : "Repository"}</p>
+      <p>Sessions: {formatNumber(row.sessions)}</p>
+      <p>Tokens: {formatTokens(row.tokens)} ({formatNumber(row.tokens)})</p>
+      <p>Spend: {formatUsd(row.costUsd)}</p>
+      <p>Time active: {formatDuration(row.durationMs)}</p>
+    </div>
+  );
+};
+
 const DashboardCharts = ({
   dateFrom,
   dateTo,
@@ -185,7 +321,20 @@ const DashboardCharts = ({
   mostExpensiveDay,
   costAgentFilter,
   costGroupBy,
+  cardAnimations,
+  hourlyBreakdown,
+  weekendSessionPercent,
+  busiestDayOfWeek,
+  busiestSingleDay,
 }: DashboardChartsProps) => {
+  const animateCard3 = Boolean(cardAnimations[3]);
+  const animateCard4 = Boolean(cardAnimations[4]);
+  const animateCard5 = Boolean(cardAnimations[5]);
+  const animateCard6 = Boolean(cardAnimations[6]);
+  const animateCard7 = Boolean(cardAnimations[7]);
+  const animateCard8 = Boolean(cardAnimations[8]);
+  const hasHourlyData = hasHourlyActivity(hourlyBreakdown);
+
   const totalModelTokens = modelBreakdown.reduce((sum, row) => sum + row.tokens, 0);
   const modelRows = modelBreakdown.map((row, index) => ({
     ...row,
@@ -195,7 +344,7 @@ const DashboardCharts = ({
   const chartModelRows = modelRows.slice(0, 8);
 
   const totalAgentTokens = agentBreakdown.reduce((sum, row) => sum + row.tokens, 0);
-  const agentRows = (() => {
+  const agentRows: AgentChartRow[] = (() => {
     const mapped = agentBreakdown.map((row) => ({
       source: row.source,
       label: row.label,
@@ -215,7 +364,7 @@ const DashboardCharts = ({
     return [
       ...major,
       {
-        source: "other" as AgentBreakdown["source"],
+        source: "other",
         label: "Others",
         sessions: otherSessions,
         tokens: otherTokens,
@@ -229,6 +378,10 @@ const DashboardCharts = ({
 
   const heatmap = buildHeatmap(timeline, dateFrom, dateTo);
   const heatmapWeeks = buildHeatmapWeeks(heatmap);
+  const heatmapCellSizePx = computeHeatmapCellSizePx(heatmapWeeks.length);
+  const heatmapGridStyle: CSSProperties = {
+    gridTemplateColumns: `repeat(${Math.max(heatmapWeeks.length, 1)}, ${heatmapCellSizePx}px)`,
+  };
   const dateSpanDays = rangeLengthDays(dateFrom, dateTo);
 
   const costTimeline = useMemo<TimelinePoint[]>(() => {
@@ -342,7 +495,6 @@ const DashboardCharts = ({
       <section data-card-index="3" className="wrapped-card wrapped-card-models">
         <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="wrapped-kicker">Card 3</p>
             <h2 className="wrapped-title">Your Top Models</h2>
           </div>
           <p className="text-sm text-slate-300">Ranked by token usage</p>
@@ -352,7 +504,7 @@ const DashboardCharts = ({
           <p className="text-sm text-slate-300">No model activity found in this range.</p>
         ) : (
           <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
-          <div className={chartWrapperClass}>
+          <div className={`${chartWrapperClass} ${animateCard3 ? chartRevealClass : ""}`}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartModelRows} layout="vertical" margin={{ left: 18, right: 16 }}>
                   <CartesianGrid stroke="rgba(148,163,184,0.22)" strokeDasharray="2 5" />
@@ -374,7 +526,15 @@ const DashboardCharts = ({
                     }}
                     formatter={formatTokensTooltipWithValue}
                   />
-                  <Bar dataKey="tokens" name="Tokens" radius={[0, 10, 10, 0]}>
+                  <Bar
+                    dataKey="tokens"
+                    name="Tokens"
+                    radius={[0, 10, 10, 0]}
+                    isAnimationActive={animateCard3}
+                    animationDuration={CHART_ANIMATION_MS}
+                    animationBegin={0}
+                    animationEasing="ease-in-out"
+                  >
                     {chartModelRows.map((row) => (
                       <Cell key={row.model} fill={row.color} />
                     ))}
@@ -411,7 +571,6 @@ const DashboardCharts = ({
       <section data-card-index="4" className="wrapped-card wrapped-card-agents">
         <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="wrapped-kicker">Card 4</p>
             <h2 className="wrapped-title">Your Agents</h2>
           </div>
           <p className="text-sm text-slate-300">Token distribution by agent</p>
@@ -421,7 +580,7 @@ const DashboardCharts = ({
           <p className="text-sm text-slate-300">No agent data found for this period.</p>
         ) : (
           <div className="grid gap-6 lg:grid-cols-[1fr_1.1fr]">
-            <div className={chartWrapperClass}>
+            <div className={`${chartWrapperClass} ${animateCard4 ? chartRevealClass : ""}`}>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
@@ -433,18 +592,19 @@ const DashboardCharts = ({
                     innerRadius={70}
                     outerRadius={105}
                     paddingAngle={agentRows.length > 1 ? 3 : 0}
+                    isAnimationActive={animateCard4}
+                    animationDuration={CHART_ANIMATION_MS}
+                    animationBegin={0}
+                    animationEasing="ease-in-out"
                   >
                     {agentRows.map((row) => (
                       <Cell key={row.source} fill={row.color} />
                     ))}
                   </Pie>
                   <Tooltip
-                    contentStyle={{
-                      background: "rgba(2,6,23,0.95)",
-                      border: "1px solid rgba(148,163,184,0.35)",
-                      borderRadius: "12px",
-                    }}
-                    formatter={formatTokensTooltipWithValue}
+                    content={<AgentPieTooltip />}
+                    allowEscapeViewBox={{ x: true, y: true }}
+                    wrapperStyle={{ zIndex: 20, pointerEvents: "none" }}
                   />
                 </PieChart>
               </ResponsiveContainer>
@@ -454,9 +614,23 @@ const DashboardCharts = ({
               {agentRows.map((row) => (
                 <article key={row.source} className="wrapped-tile">
                   <p className="text-xs uppercase tracking-[0.2em]" style={{ color: row.color }}>{row.icon} {row.label}</p>
-                  <p className="mt-2 text-2xl font-semibold text-white">{formatTokens(row.tokens)}</p>
+                  <AnimatedNumber
+                    value={row.tokens}
+                    animate={animateCard4}
+                    durationMs={CHART_ANIMATION_MS}
+                    format={formatTokens}
+                    className="mt-2 block text-2xl font-semibold text-white"
+                  />
                   <p className="mt-1 text-xs text-slate-300">{row.percentage.toFixed(1)}% of total</p>
-                  <p className="text-xs text-slate-400">{formatNumber(row.sessions)} sessions</p>
+                  <p className="text-xs text-slate-400">
+                    <AnimatedNumber
+                      value={row.sessions}
+                      animate={animateCard4}
+                      durationMs={CHART_ANIMATION_MS}
+                      format={(value) => formatNumber(Math.max(0, Math.round(value)))}
+                    />{" "}
+                    sessions
+                  </p>
                 </article>
               ))}
             </div>
@@ -467,7 +641,6 @@ const DashboardCharts = ({
       <section data-card-index="5" className="wrapped-card wrapped-card-activity">
         <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="wrapped-kicker">Card 5</p>
             <h2 className="wrapped-title">Daily Activity</h2>
           </div>
           <p className="text-sm text-slate-300">Heatmap of daily token usage</p>
@@ -477,35 +650,38 @@ const DashboardCharts = ({
           <p className="text-sm text-slate-300">No activity timeline available.</p>
         ) : (
           <div>
-            <div className="rounded-2xl border border-white/12 bg-slate-950/45 p-4">
-              <div
-                className="grid gap-1"
-                style={{
-                  gridTemplateColumns: `repeat(${Math.max(heatmapWeeks.length, 1)}, minmax(0, 1fr))`,
-                }}
-              >
-                {heatmapWeeks.map((week, weekIndex) => (
-                  <div key={`week-${weekIndex}`} className="grid grid-rows-7 gap-1">
-                    {week.map((cell, dayIndex) => {
-                      if (!cell) {
-                        return <div key={`empty-${weekIndex}-${dayIndex}`} className="aspect-square w-full rounded-[4px] opacity-0" />;
-                      }
+            <div className={`rounded-2xl border border-white/12 bg-slate-950/45 p-4 ${animateCard5 ? chartRevealClass : ""}`}>
+              <div className="overflow-x-auto pb-1">
+                <div className="inline-grid gap-1" style={heatmapGridStyle}>
+                  {heatmapWeeks.map((week, weekIndex) => (
+                    <div key={`week-${weekIndex}`} className="grid grid-rows-7 gap-1">
+                      {week.map((cell, dayIndex) => {
+                        if (!cell) {
+                          return (
+                            <div
+                              key={`empty-${weekIndex}-${dayIndex}`}
+                              className="rounded-[4px] opacity-0"
+                              style={{ width: heatmapCellSizePx, height: heatmapCellSizePx }}
+                            />
+                          );
+                        }
 
-                      const alpha = 0.12 + cell.intensity * 0.88;
-                      const background =
-                        cell.sessions > 0 ? `rgba(45,212,191,${alpha.toFixed(3)})` : "rgba(71,85,105,0.20)";
+                        const alpha = 0.12 + cell.intensity * 0.88;
+                        const background =
+                          cell.sessions > 0 ? `rgba(45,212,191,${alpha.toFixed(3)})` : "rgba(71,85,105,0.20)";
 
-                      return (
-                        <div
-                          key={cell.date}
-                          className="aspect-square w-full rounded-[4px]"
-                          style={{ background }}
-                          title={buildActivityTooltip(cell, dailyAgentTokensByDate)}
-                        />
-                      );
-                    })}
-                  </div>
-                ))}
+                        return (
+                          <div
+                            key={cell.date}
+                            className="rounded-[4px]"
+                            style={{ width: heatmapCellSizePx, height: heatmapCellSizePx, background }}
+                            title={buildActivityTooltip(cell, dailyAgentTokensByDate)}
+                          />
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
             <p className="mt-3 text-xs text-slate-400">{formatShortDate(dateFrom)} - {formatShortDate(dateTo)}</p>
@@ -516,7 +692,6 @@ const DashboardCharts = ({
       <section data-card-index="6" className="wrapped-card wrapped-card-cost">
         <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="wrapped-kicker">Card 6</p>
             <h2 className="wrapped-title">Cost Breakdown</h2>
           </div>
         </header>
@@ -524,11 +699,23 @@ const DashboardCharts = ({
         <div className="grid gap-4 md:grid-cols-3">
           <article className="wrapped-tile">
             <p className="wrapped-label">Total Spend</p>
-            <p className="mt-2 text-4xl font-semibold text-white">{formatUsd(selectedTotalCostUsd)}</p>
+            <AnimatedNumber
+              value={selectedTotalCostUsd}
+              animate={animateCard6}
+              durationMs={CHART_ANIMATION_MS}
+              format={formatUsd}
+              className="mt-2 block text-4xl font-semibold text-white"
+            />
           </article>
           <article className="wrapped-tile">
             <p className="wrapped-label">Daily Average</p>
-            <p className="mt-2 text-3xl font-semibold text-white">{formatUsd(selectedDailyAverageCostUsd)}</p>
+            <AnimatedNumber
+              value={selectedDailyAverageCostUsd}
+              animate={animateCard6}
+              durationMs={CHART_ANIMATION_MS}
+              format={formatUsd}
+              className="mt-2 block text-3xl font-semibold text-white"
+            />
           </article>
           <article className="wrapped-tile">
             <p className="wrapped-label">Most Expensive Day</p>
@@ -536,12 +723,21 @@ const DashboardCharts = ({
               {selectedMostExpensiveDay ? formatShortDate(selectedMostExpensiveDay.date) : "-"}
             </p>
             <p className="mt-1 text-sm text-slate-300">
-              {selectedMostExpensiveDay ? formatUsd(selectedMostExpensiveDay.costUsd) : "No cost data"}
+              {selectedMostExpensiveDay ? (
+                <AnimatedNumber
+                  value={selectedMostExpensiveDay.costUsd}
+                  animate={animateCard6}
+                  durationMs={CHART_ANIMATION_MS}
+                  format={formatUsd}
+                />
+              ) : (
+                "No cost data"
+              )}
             </p>
           </article>
         </div>
 
-        <div className="mt-6 h-56 sm:h-64">
+        <div className={`mt-6 h-56 sm:h-64 ${animateCard6 ? chartRevealClass : ""}`}>
           {effectiveCostGroupBy === "none" ? (
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={costTimeline}>
@@ -563,7 +759,18 @@ const DashboardCharts = ({
                   formatter={formatUsdTooltip}
                   labelFormatter={(value) => formatDate(String(value))}
                 />
-                <Area type="monotone" dataKey="costUsd" name="Cost" stroke="#38bdf8" fill="url(#costFill)" strokeWidth={2.5} />
+                <Area
+                  type="monotone"
+                  dataKey="costUsd"
+                  name="Cost"
+                  stroke="#38bdf8"
+                  fill="url(#costFill)"
+                  strokeWidth={2.5}
+                  isAnimationActive={animateCard6}
+                  animationDuration={CHART_ANIMATION_MS}
+                  animationBegin={0}
+                  animationEasing="ease-in-out"
+                />
               </AreaChart>
             </ResponsiveContainer>
           ) : (
@@ -595,6 +802,10 @@ const DashboardCharts = ({
                     fill={series.color}
                     fillOpacity={0.22}
                     strokeWidth={2}
+                    isAnimationActive={animateCard6}
+                    animationDuration={CHART_ANIMATION_MS}
+                    animationBegin={0}
+                    animationEasing="ease-in-out"
                   />
                 ))}
               </AreaChart>
@@ -606,7 +817,6 @@ const DashboardCharts = ({
       <section data-card-index="7" className="wrapped-card wrapped-card-repos">
         <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="wrapped-kicker">Card 7</p>
             <h2 className="wrapped-title">Your Top Repos</h2>
           </div>
           <p className="text-sm text-slate-300">By session volume and cost</p>
@@ -618,17 +828,32 @@ const DashboardCharts = ({
           <div className="grid gap-6 lg:grid-cols-[1fr_1.2fr]">
             <div className="space-y-2">
               {topRepos.map((repo) => (
-                <article key={repo.repo} className="wrapped-tile">
+                <article key={repo.repo} className="wrapped-tile" title={buildRepoHoverDetails(repo)}>
                   <p className="truncate text-sm font-semibold text-white">{repo.repo}</p>
                   <div className="mt-2 flex items-center justify-between text-xs text-slate-300">
-                    <span>{formatNumber(repo.sessions)} sessions</span>
-                    <span>{formatUsd(repo.costUsd)}</span>
+                    <span>
+                      <AnimatedNumber
+                        value={repo.sessions}
+                        animate={animateCard7}
+                        durationMs={CHART_ANIMATION_MS}
+                        format={(value) => formatNumber(Math.max(0, Math.round(value)))}
+                      />{" "}
+                      sessions
+                    </span>
+                    <span>
+                      <AnimatedNumber
+                        value={repo.costUsd}
+                        animate={animateCard7}
+                        durationMs={CHART_ANIMATION_MS}
+                        format={formatUsd}
+                      />
+                    </span>
                   </div>
                 </article>
               ))}
             </div>
 
-            <div className={chartWrapperClass}>
+            <div className={`${chartWrapperClass} ${animateCard7 ? chartRevealClass : ""}`}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={topRepos} layout="vertical" margin={{ left: 12, right: 16 }}>
                   <CartesianGrid stroke="rgba(148,163,184,0.2)" strokeDasharray="2 5" />
@@ -647,14 +872,123 @@ const DashboardCharts = ({
                       border: "1px solid rgba(148,163,184,0.35)",
                       borderRadius: "12px",
                     }}
-                    formatter={formatNumberTooltip}
+                    content={renderTopReposTooltip}
                   />
-                  <Bar dataKey="sessions" fill="#14b8a6" radius={[0, 10, 10, 0]} />
+                  <Bar
+                    dataKey="sessions"
+                    fill="#14b8a6"
+                    radius={[0, 10, 10, 0]}
+                    isAnimationActive={animateCard7}
+                    animationDuration={CHART_ANIMATION_MS}
+                    animationBegin={0}
+                    animationEasing="ease-in-out"
+                  />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
         )}
+      </section>
+
+      <section data-card-index="8" className="wrapped-card wrapped-card-hours">
+        <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="wrapped-title">Your Coding Hours</h2>
+          </div>
+          <p className="text-sm text-slate-300">When you code the most</p>
+        </header>
+
+        {!hasHourlyData ? (
+          <p className="text-sm text-slate-300">No hourly activity found in this range.</p>
+        ) : (() => {
+          const peakEntry = hourlyBreakdown.reduce(
+            (max, entry) => (entry.tokens > max.tokens ? entry : max),
+            hourlyBreakdown[0] as HourlyDataPoint,
+          );
+          const peakHour = peakEntry.hour;
+          const peakTokens = peakEntry.tokens;
+          const personality = classifyCodingPersonality(peakHour);
+          const nightSessions = hourlyBreakdown
+            .filter((h) => h.hour >= 0 && h.hour < 6)
+            .reduce((sum, h) => sum + h.sessions, 0);
+
+          return (
+            <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+              <div className={`${chartWrapperClass} ${animateCard8 ? chartRevealClass : ""}`}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={hourlyBreakdown}>
+                    <CartesianGrid stroke="rgba(148,163,184,0.22)" strokeDasharray="2 5" />
+                    <XAxis
+                      dataKey="label"
+                      tick={{ fill: "#cbd5e1", fontSize: 10 }}
+                      tickLine={false}
+                      axisLine={false}
+                      interval={2}
+                    />
+                    <YAxis tick={{ fill: "#cbd5e1", fontSize: 11 }} tickLine={false} axisLine={false} />
+                    <Tooltip
+                      content={<HourlyBarTooltip />}
+                      allowEscapeViewBox={{ x: true, y: true }}
+                      wrapperStyle={{ zIndex: 20, pointerEvents: "none" }}
+                    />
+                    <Bar
+                      dataKey="tokens"
+                      name="Tokens"
+                      radius={[6, 6, 0, 0]}
+                      isAnimationActive={animateCard8}
+                      animationDuration={CHART_ANIMATION_MS}
+                      animationBegin={0}
+                      animationEasing="ease-in-out"
+                    >
+                      {hourlyBreakdown.map((row) => (
+                        <Cell
+                          key={row.hour}
+                          fill={row.hour === peakHour ? "#22d3ee" : "rgba(56,189,248,0.45)"}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                <article className="wrapped-tile py-6 text-center">
+                  <p className="text-5xl">{personality.emoji}</p>
+                  <p className="mt-3 text-2xl font-semibold text-white">{personality.label}</p>
+                  <p className="mt-2 text-sm text-slate-300">{personality.description}</p>
+                </article>
+
+                <article className="wrapped-tile">
+                  <p className="wrapped-label">Peak Hour</p>
+                  <AnimatedNumber
+                    value={peakHour}
+                    animate={animateCard8}
+                    durationMs={CHART_ANIMATION_MS}
+                    format={(v) => formatHourLabel(Math.round(v))}
+                    className="mt-2 block text-3xl font-semibold text-white"
+                  />
+                  <p className="mt-1 text-xs text-slate-300">
+                    {formatTokens(peakTokens)} tokens in your busiest hour
+                  </p>
+                </article>
+
+                <article className="wrapped-tile">
+                  <p className="wrapped-label">Fun Stats</p>
+                  <div className="mt-2 space-y-1 text-sm text-slate-200">
+                    <p>{formatNumber(nightSessions)} sessions after midnight</p>
+                    <p>{weekendSessionPercent}% of coding on weekends</p>
+                    {busiestDayOfWeek && <p>{busiestDayOfWeek}s are your power day</p>}
+                    {busiestSingleDay && (
+                      <p>
+                        Busiest day: {formatDate(busiestSingleDay.date)} ({formatTokens(busiestSingleDay.tokens)})
+                      </p>
+                    )}
+                  </div>
+                </article>
+              </div>
+            </div>
+          );
+        })()}
       </section>
     </>
   );

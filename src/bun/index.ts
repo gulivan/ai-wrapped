@@ -13,6 +13,7 @@ import {
   SESSION_SOURCES,
   type DailyAggregate,
   type DashboardSummary,
+  type HourlyBreakdownEntry,
   type SessionSource,
   type TokenUsage,
   type TrayStats,
@@ -21,12 +22,15 @@ import type { AppSettings, AIStatsRPC } from "../shared/types";
 import { runScan } from "./scan";
 import {
   createEmptyDayStats,
+  dailyStoreMissingHourDimension,
   dailyStoreMissingRepoDimension,
   getSettings,
   readDailyStore,
   setSettings,
   type DayStats,
 } from "./store";
+import { buildTopRepos } from "./dashboardSummary";
+import { getOpenExternalCommand, tryResolveAllowedExternalUrl } from "./external";
 
 const isMac = process.platform === "darwin";
 const CUSTOM_MENU_ENABLED = Bun.env.AI_WRAPPED_CUSTOM_MENU === "1";
@@ -124,6 +128,8 @@ const getDashboardSummaryFromStore = async (
   const byAgent = createEmptyByAgent();
   const byModelMap = new Map<string, DayStats>();
   const byRepoMap = new Map<string, DayStats>();
+  const byHourMap = new Map<number, DayStats>();
+  const byHourSourceMap = new Map<number, Map<string, DayStats>>();
   const totals = createEmptyDayStats();
 
   for (const date of Object.keys(daily)) {
@@ -164,6 +170,29 @@ const getDashboardSummaryFromStore = async (
 
       addDayStats(byRepoMap.get(repo) as DayStats, repoStats);
     }
+
+    for (const [hour, hourStats] of Object.entries(entry.byHour)) {
+      const hourNum = Number(hour);
+      if (!byHourMap.has(hourNum)) {
+        byHourMap.set(hourNum, createEmptyDayStats());
+      }
+
+      addDayStats(byHourMap.get(hourNum) as DayStats, hourStats);
+    }
+
+    for (const [hour, sources] of Object.entries(entry.byHourSource)) {
+      const hourNum = Number(hour);
+      if (!byHourSourceMap.has(hourNum)) {
+        byHourSourceMap.set(hourNum, new Map());
+      }
+      const sourceMap = byHourSourceMap.get(hourNum) as Map<string, DayStats>;
+      for (const [source, sourceStats] of Object.entries(sources)) {
+        if (!sourceMap.has(source)) {
+          sourceMap.set(source, createEmptyDayStats());
+        }
+        addDayStats(sourceMap.get(source) as DayStats, sourceStats);
+      }
+    }
   }
 
   const byModel = [...byModelMap.entries()]
@@ -181,19 +210,38 @@ const getDashboardSummaryFromStore = async (
 
   const dailyTimeline =
     dateFrom && dateTo ? await getDailyTimelineFromStore(dateFrom, dateTo) : [];
-  const topRepos = [...byRepoMap.entries()]
-    .map(([repo, stats]) => ({
-      repo,
+  const topRepos = buildTopRepos(byRepoMap);
+
+  const hourlyBreakdown: HourlyBreakdownEntry[] = Array.from({ length: 24 }, (_, hour) => {
+    const stats = byHourMap.get(hour) ?? createEmptyDayStats();
+    const sourceMap = byHourSourceMap.get(hour);
+    const byAgent = sourceMap
+      ? SESSION_SOURCES
+          .filter((source) => sourceMap.has(source))
+          .map((source) => {
+            const s = sourceMap.get(source) as DayStats;
+            return {
+              source,
+              sessions: s.sessions,
+              tokens: toTokenUsage(s),
+              costUsd: s.costUsd,
+            };
+          })
+          .sort((a, b) => {
+            const aTot = a.tokens.inputTokens + a.tokens.outputTokens;
+            const bTot = b.tokens.inputTokens + b.tokens.outputTokens;
+            return bTot - aTot;
+          })
+      : [];
+    return {
+      hour,
       sessions: stats.sessions,
+      tokens: toTokenUsage(stats),
       costUsd: stats.costUsd,
-    }))
-    .filter((entry) => entry.sessions > 0)
-    .sort((left, right) => {
-      if (right.sessions !== left.sessions) return right.sessions - left.sessions;
-      if (right.costUsd !== left.costUsd) return right.costUsd - left.costUsd;
-      return left.repo.localeCompare(right.repo);
-    })
-    .slice(0, 24);
+      durationMs: stats.durationMs,
+      byAgent,
+    };
+  });
 
   return {
     totals: {
@@ -210,6 +258,7 @@ const getDashboardSummaryFromStore = async (
     dailyTimeline,
     topRepos,
     topTools: [],
+    hourlyBreakdown,
   };
 };
 
@@ -549,7 +598,7 @@ const runScanWithNotifications = async (fullScan = false) => {
   });
 
   try {
-    const effectiveFullScan = fullScan || (await dailyStoreNeedsRepoBackfill());
+    const effectiveFullScan = fullScan || (await dailyStoreNeedsRepoBackfill()) || (await dailyStoreMissingHourDimension());
     const result = await runScan({ fullScan: effectiveFullScan });
     lastScanAt = new Date().toISOString();
 
@@ -703,7 +752,24 @@ const createTray = () => {
   void updateTrayMenu();
 };
 
-const ALLOWED_EXTERNAL_HOSTS = new Set(["x.com", "www.x.com", "github.com", "www.github.com"]);
+const openExternalUrl = (url: string): void => {
+  try {
+    const command = getOpenExternalCommand(url);
+    const process = Bun.spawn(command, {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    void process.exited.then((exitCode) => {
+      if (exitCode !== 0) {
+        console.warn(`[rpc] Failed to open URL: ${url} (exit code ${exitCode})`);
+      }
+    });
+  } catch (error) {
+    console.warn(`[rpc] Failed to open URL: ${url}`, error);
+  }
+};
 
 const rpc = BrowserView.defineRPC<AIStatsRPC>({
   handlers: {
@@ -734,20 +800,12 @@ const rpc = BrowserView.defineRPC<AIStatsRPC>({
     },
     messages: {
       openExternal: ({ url }) => {
-        try {
-          const parsed = new URL(url);
-          const protocolAllowed = parsed.protocol === "https:" || parsed.protocol === "http:";
-          const hostAllowed = ALLOWED_EXTERNAL_HOSTS.has(parsed.hostname.toLowerCase());
-          if (!protocolAllowed || !hostAllowed) {
-            console.warn(`[rpc] Rejected openExternal for disallowed target: ${url}`);
-            return;
-          }
-          void Bun.$`open ${url}`.quiet().catch((error) => {
-            console.warn(`[rpc] Failed to open URL: ${url}`, error);
-          });
-        } catch {
+        const resolved = tryResolveAllowedExternalUrl(url);
+        if (!resolved) {
           console.warn(`[rpc] Rejected openExternal for invalid URL: ${url}`);
+          return;
         }
+        openExternalUrl(resolved);
       },
       log: ({ msg, level }) => {
         if (level === "warn") {

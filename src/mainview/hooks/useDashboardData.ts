@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DashboardSummary, DailyAggregate, SessionSource, TokenUsage } from "@shared/schema";
 import { SESSION_SOURCES } from "@shared/schema";
 import { SOURCE_LABELS } from "../lib/constants";
+import { formatHourLabel } from "../lib/hourly";
 import { collectModelKeys } from "./modelKeys";
 import { rpcRequest, useRPC } from "./useRPC";
 
@@ -136,6 +137,31 @@ export interface ModelBreakdown {
   costUsd: number;
 }
 
+export interface HourlyAgentDataPoint {
+  source: SessionSource;
+  label: string;
+  sessions: number;
+  tokens: number;
+  costUsd: number;
+}
+
+export interface HourlyDataPoint {
+  hour: number;
+  label: string;
+  sessions: number;
+  tokens: number;
+  costUsd: number;
+  durationMs: number;
+  byAgent: HourlyAgentDataPoint[];
+}
+
+export interface BusiestSingleDay {
+  date: string;
+  tokens: number;
+}
+
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+
 export type DailyAgentTokensByDate = Record<string, Record<SessionSource, number>>;
 export type DailyAgentCostsByDate = Record<string, Record<SessionSource, number>>;
 export type DailyModelCostsByDate = Record<string, Record<string, number>>;
@@ -248,6 +274,7 @@ export const useDashboardData = () => {
   const [dailyModelCostsByDate, setDailyModelCostsByDate] = useState<DailyModelCostsByDate>({});
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [isScanning, setIsScanning] = useState<boolean>(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -309,16 +336,23 @@ export const useDashboardData = () => {
   }, [refresh]);
 
   useEffect(() => {
-    const listener = () => {
+    const onScanStarted = () => {
+      setIsScanning(true);
+    };
+
+    const onScanDone = () => {
+      setIsScanning(false);
       void refresh();
     };
 
-    rpc.addMessageListener("sessionsUpdated", listener);
-    rpc.addMessageListener("scanCompleted", listener);
+    rpc.addMessageListener("scanStarted", onScanStarted);
+    rpc.addMessageListener("sessionsUpdated", onScanDone);
+    rpc.addMessageListener("scanCompleted", onScanDone);
 
     return () => {
-      rpc.removeMessageListener("sessionsUpdated", listener);
-      rpc.removeMessageListener("scanCompleted", listener);
+      rpc.removeMessageListener("scanStarted", onScanStarted);
+      rpc.removeMessageListener("sessionsUpdated", onScanDone);
+      rpc.removeMessageListener("scanCompleted", onScanDone);
     };
   }, [refresh, rpc]);
 
@@ -408,11 +442,63 @@ export const useDashboardData = () => {
         .map((entry) => ({
           repo: entry.repo,
           sessions: entry.sessions,
+          tokens: entry.tokens,
           costUsd: entry.costUsd,
+          durationMs: entry.durationMs,
         }))
         .slice(0, 8),
     [summary],
   );
+
+  const hourlyBreakdown = useMemo<HourlyDataPoint[]>(() => {
+    if (!summary?.hourlyBreakdown) return [];
+
+    return summary.hourlyBreakdown.map((entry) => ({
+      hour: entry.hour,
+      label: formatHourLabel(entry.hour),
+      sessions: entry.sessions,
+      tokens: tokenTotal(entry.tokens),
+      costUsd: entry.costUsd,
+      durationMs: entry.durationMs,
+      byAgent: entry.byAgent.map((a) => ({
+        source: a.source,
+        label: SOURCE_LABELS[a.source],
+        sessions: a.sessions,
+        tokens: tokenTotal(a.tokens),
+        costUsd: a.costUsd,
+      })),
+    }));
+  }, [summary]);
+
+  const weekendSessionPercent = useMemo(() => {
+    if (timelinePoints.length === 0) return 0;
+    const total = timelinePoints.reduce((s, p) => s + p.sessions, 0);
+    if (total === 0) return 0;
+    const weekendTotal = timelinePoints
+      .filter((p) => {
+        const day = new Date(`${p.date}T00:00:00Z`).getUTCDay();
+        return day === 0 || day === 6;
+      })
+      .reduce((s, p) => s + p.sessions, 0);
+    return Math.round((weekendTotal / total) * 100);
+  }, [timelinePoints]);
+
+  const busiestDayOfWeek = useMemo<string>(() => {
+    if (timelinePoints.length === 0) return "";
+    const byDay = [0, 0, 0, 0, 0, 0, 0];
+    for (const p of timelinePoints) {
+      const day = new Date(`${p.date}T00:00:00Z`).getUTCDay();
+      byDay[day] += p.sessions;
+    }
+    const maxIdx = byDay.indexOf(Math.max(...byDay));
+    return DAY_NAMES[maxIdx] ?? "";
+  }, [timelinePoints]);
+
+  const busiestSingleDay = useMemo<BusiestSingleDay | null>(() => {
+    if (timelinePoints.length === 0) return null;
+    const best = timelinePoints.reduce((max, p) => (p.tokens > max.tokens ? p : max), timelinePoints[0]);
+    return best && best.tokens > 0 ? { date: best.date, tokens: best.tokens } : null;
+  }, [timelinePoints]);
 
   return {
     dateFrom,
@@ -428,9 +514,14 @@ export const useDashboardData = () => {
     loading,
     error,
     refresh,
+    isScanning,
     totals,
     agentBreakdown,
     modelBreakdown,
     topRepos,
+    hourlyBreakdown,
+    weekendSessionPercent,
+    busiestDayOfWeek,
+    busiestSingleDay,
   };
 };
