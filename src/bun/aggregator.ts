@@ -40,6 +40,12 @@ const toSessionStats = (session: Session): DayStats => ({
   durationMs: session.durationMs ?? 0,
 });
 
+const toRepoKey = (repoName: string | null): string | null => {
+  if (!repoName) return null;
+  const trimmed = repoName.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
 const ensureDateEntry = (daily: DailyStore, date: string): DailyAggregateEntry => {
   const existing = daily[date];
   if (existing) {
@@ -49,6 +55,7 @@ const ensureDateEntry = (daily: DailyStore, date: string): DailyAggregateEntry =
   const created: DailyAggregateEntry = {
     bySource: {},
     byModel: {},
+    byRepo: {},
     totals: createEmptyDayStats(),
   };
   daily[date] = created;
@@ -73,6 +80,7 @@ const sortDailyStore = (daily: DailyStore): DailyStore => {
     output[date] = {
       bySource: sortedEntries(entry.bySource),
       byModel: sortedEntries(entry.byModel),
+      byRepo: sortedEntries(entry.byRepo),
       totals: { ...entry.totals },
     };
   }
@@ -87,6 +95,7 @@ export const aggregateSessionsByDate = (sessions: Session[]): DailyStore => {
     const date = toDayKey(session);
     const entry = ensureDateEntry(daily, date);
     const modelKey = session.model && session.model.trim().length > 0 ? session.model : "unknown";
+    const repoKey = toRepoKey(session.repoName);
     const stats = toSessionStats(session);
 
     if (!entry.bySource[session.source]) {
@@ -95,9 +104,15 @@ export const aggregateSessionsByDate = (sessions: Session[]): DailyStore => {
     if (!entry.byModel[modelKey]) {
       entry.byModel[modelKey] = createEmptyDayStats();
     }
+    if (repoKey && !entry.byRepo[repoKey]) {
+      entry.byRepo[repoKey] = createEmptyDayStats();
+    }
 
     addStats(entry.bySource[session.source] as DayStats, stats);
     addStats(entry.byModel[modelKey] as DayStats, stats);
+    if (repoKey) {
+      addStats(entry.byRepo[repoKey] as DayStats, stats);
+    }
     addStats(entry.totals, stats);
   }
 

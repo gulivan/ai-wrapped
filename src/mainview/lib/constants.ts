@@ -1,7 +1,7 @@
 import type { SessionSource } from "@shared/schema";
 
 export const SOURCE_LABELS: Record<SessionSource, string> = {
-  claude: "Claude",
+  claude: "Claude Code",
   codex: "Codex",
   gemini: "Gemini",
   opencode: "OpenCode",

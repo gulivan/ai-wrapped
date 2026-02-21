@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import type { FileCandidate } from "../discovery";
-import { extractText, normalizeTimestamp, resolveEventKind } from "../normalizer";
+import { extractText, normalizeTimestamp, normalizeTokenUsage, resolveEventKind } from "../normalizer";
 import type { SessionEvent } from "../session-schema";
 import type { RawParsedSession, SessionParser } from "./types";
 
@@ -73,6 +73,103 @@ const extractCodexText = (record: Record<string, unknown>, payload: Record<strin
   return extractText(record.content ?? record.text ?? record.message ?? record);
 };
 
+interface CodexUsageTotals {
+  inputTokens: number;
+  cacheReadTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+}
+
+const toFiniteNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const toCodexUsageTotals = (value: unknown): CodexUsageTotals | null => {
+  const record = asRecord(value);
+  if (!record) return null;
+
+  const inputTokens = toFiniteNumber(record.input_tokens);
+  const cacheReadTokens = toFiniteNumber(record.cached_input_tokens) ?? 0;
+  const outputTokens = toFiniteNumber(record.output_tokens);
+  const reasoningTokens = toFiniteNumber(record.reasoning_output_tokens) ?? 0;
+
+  if (inputTokens === null && outputTokens === null) return null;
+
+  return {
+    inputTokens: Math.max(0, inputTokens ?? 0),
+    cacheReadTokens: Math.max(0, cacheReadTokens),
+    outputTokens: Math.max(0, outputTokens ?? 0),
+    reasoningTokens: Math.max(0, reasoningTokens),
+  };
+};
+
+const subtractUsageTotals = (current: CodexUsageTotals, previous: CodexUsageTotals | null): CodexUsageTotals => {
+  if (!previous) return current;
+
+  return {
+    inputTokens: Math.max(0, current.inputTokens - previous.inputTokens),
+    cacheReadTokens: Math.max(0, current.cacheReadTokens - previous.cacheReadTokens),
+    outputTokens: Math.max(0, current.outputTokens - previous.outputTokens),
+    reasoningTokens: Math.max(0, current.reasoningTokens - previous.reasoningTokens),
+  };
+};
+
+const toTokenUsage = (usage: CodexUsageTotals): SessionEvent["tokens"] => {
+  const uncachedInputTokens = Math.max(0, usage.inputTokens - usage.cacheReadTokens);
+  const nonReasoningOutputTokens = Math.max(0, usage.outputTokens - usage.reasoningTokens);
+
+  if (
+    uncachedInputTokens === 0 &&
+    nonReasoningOutputTokens === 0 &&
+    usage.cacheReadTokens === 0 &&
+    usage.reasoningTokens === 0
+  ) {
+    return null;
+  }
+
+  return {
+    inputTokens: uncachedInputTokens,
+    outputTokens: nonReasoningOutputTokens,
+    cacheReadTokens: usage.cacheReadTokens,
+    cacheWriteTokens: 0,
+    reasoningTokens: usage.reasoningTokens,
+  };
+};
+
+const extractTokenCountUsage = (
+  payload: Record<string, unknown> | null,
+  previousTotals: CodexUsageTotals | null,
+): { tokens: SessionEvent["tokens"]; nextTotals: CodexUsageTotals | null } => {
+  const info = asRecord(payload?.info);
+  const totalUsage = toCodexUsageTotals(info?.total_token_usage);
+  const lastUsage = toCodexUsageTotals(info?.last_token_usage);
+
+  if (totalUsage) {
+    const deltaUsage = subtractUsageTotals(totalUsage, previousTotals);
+    const deltaTokens = toTokenUsage(deltaUsage);
+    if (deltaTokens) {
+      return { tokens: deltaTokens, nextTotals: totalUsage };
+    }
+
+    if (!previousTotals && lastUsage) {
+      return { tokens: toTokenUsage(lastUsage), nextTotals: totalUsage };
+    }
+
+    return { tokens: null, nextTotals: totalUsage };
+  }
+
+  if (lastUsage) {
+    return { tokens: toTokenUsage(lastUsage), nextTotals: previousTotals };
+  }
+
+  return { tokens: null, nextTotals: previousTotals };
+};
+
 const createEvent = (
   sessionId: string,
   lineIndex: number,
@@ -89,6 +186,7 @@ const createEvent = (
     messageId?: string | null;
     isDelta?: boolean;
     kindType?: string | null;
+    tokens?: SessionEvent["tokens"];
   } = {},
 ): SessionEvent => {
   const payload = asRecord(record.payload);
@@ -113,7 +211,7 @@ const createEvent = (
     parentId: options.parentId ?? null,
     messageId,
     isDelta: Boolean(options.isDelta),
-    tokens: null,
+    tokens: options.tokens ?? null,
     costUsd: null,
   };
 };
@@ -133,6 +231,7 @@ export const codexParser: SessionParser = {
       let model: string | null = null;
       let cliVersion: string | null = null;
       let title: string | null = null;
+      let previousCodexTotalUsage: CodexUsageTotals | null = null;
 
       const events: SessionEvent[] = [];
 
@@ -237,6 +336,7 @@ export const codexParser: SessionParser = {
               model,
               isDelta: detectDelta(payloadType, payload),
               kindType: payloadType,
+              tokens: normalizeTokenUsage(payload?.usage ?? payload?.tokens ?? asRecord(payload?.data)?.usage),
             }),
           );
           continue;
@@ -244,6 +344,22 @@ export const codexParser: SessionParser = {
 
         if (type === "event_msg") {
           const messageType = payloadType;
+
+          if (messageType === "token_count") {
+            const { tokens, nextTotals } = extractTokenCountUsage(payload, previousCodexTotalUsage);
+            previousCodexTotalUsage = nextTotals;
+
+            events.push(
+              createEvent(sessionId, lineIndex, record, "meta", {
+                role: "meta",
+                text: getString(payload?.text) ?? getString(payload?.message) ?? extractCodexText(record, payload),
+                model,
+                kindType: messageType,
+                tokens,
+              }),
+            );
+            continue;
+          }
 
           if (messageType === "user_message") {
             const text = getString(payload?.message) ?? extractText(payload);

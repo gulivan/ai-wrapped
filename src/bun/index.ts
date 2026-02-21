@@ -21,6 +21,7 @@ import type { AppSettings, AIStatsRPC } from "../shared/types";
 import { runScan } from "./scan";
 import {
   createEmptyDayStats,
+  dailyStoreMissingRepoDimension,
   getSettings,
   readDailyStore,
   setSettings,
@@ -28,6 +29,7 @@ import {
 } from "./store";
 
 const isMac = process.platform === "darwin";
+const CUSTOM_MENU_ENABLED = Bun.env.AI_WRAPPED_CUSTOM_MENU === "1";
 
 let isScanning = false;
 let isQuitting = false;
@@ -35,6 +37,8 @@ let lastScanAt: string | null = null;
 let scanIntervalId: ReturnType<typeof setInterval> | null = null;
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+let isMainViewReady = false;
+const pendingWebviewMessages: Array<() => void> = [];
 
 const addDayStats = (target: DayStats, source: DayStats): void => {
   target.sessions += source.sessions;
@@ -113,6 +117,7 @@ const getDashboardSummaryFromStore = async (
   const daily = await readDailyStore();
   const byAgent = createEmptyByAgent();
   const byModelMap = new Map<string, DayStats>();
+  const byRepoMap = new Map<string, DayStats>();
   const totals = createEmptyDayStats();
 
   for (const date of Object.keys(daily)) {
@@ -145,6 +150,14 @@ const getDashboardSummaryFromStore = async (
 
       addDayStats(byModelMap.get(model) as DayStats, modelStats);
     }
+
+    for (const [repo, repoStats] of Object.entries(entry.byRepo)) {
+      if (!byRepoMap.has(repo)) {
+        byRepoMap.set(repo, createEmptyDayStats());
+      }
+
+      addDayStats(byRepoMap.get(repo) as DayStats, repoStats);
+    }
   }
 
   const byModel = [...byModelMap.entries()]
@@ -158,10 +171,23 @@ const getDashboardSummaryFromStore = async (
       if (right.sessions !== left.sessions) return right.sessions - left.sessions;
       return right.costUsd - left.costUsd;
     })
-    .slice(0, 20);
+    .slice(0, 100);
 
   const dailyTimeline =
     dateFrom && dateTo ? await getDailyTimelineFromStore(dateFrom, dateTo) : [];
+  const topRepos = [...byRepoMap.entries()]
+    .map(([repo, stats]) => ({
+      repo,
+      sessions: stats.sessions,
+      costUsd: stats.costUsd,
+    }))
+    .filter((entry) => entry.sessions > 0)
+    .sort((left, right) => {
+      if (right.sessions !== left.sessions) return right.sessions - left.sessions;
+      if (right.costUsd !== left.costUsd) return right.costUsd - left.costUsd;
+      return left.repo.localeCompare(right.repo);
+    })
+    .slice(0, 24);
 
   return {
     totals: {
@@ -176,9 +202,28 @@ const getDashboardSummaryFromStore = async (
     byAgent,
     byModel,
     dailyTimeline,
-    topRepos: [],
+    topRepos,
     topTools: [],
   };
+};
+
+const dailyStoreNeedsRepoBackfill = async (): Promise<boolean> => {
+  const daily = await readDailyStore();
+  let hasSessions = false;
+
+  for (const entry of Object.values(daily)) {
+    if (entry.totals.sessions > 0) {
+      hasSessions = true;
+    }
+
+    if (hasSessions) break;
+  }
+
+  if (!hasSessions) {
+    return false;
+  }
+
+  return dailyStoreMissingRepoDimension();
 };
 
 const getSessionCountFromStore = async (): Promise<number> => {
@@ -310,6 +355,7 @@ const updateTrayMenu = async () => {
 const createMainWindow = () => {
   const devUrl = process.env.ELECTROBUN_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL ?? null;
   const url = devUrl && devUrl.trim().length > 0 ? devUrl : "views://mainview/index.html";
+  isMainViewReady = false;
 
   const window = new BrowserWindow({
     title: "AI Wrapped",
@@ -325,6 +371,30 @@ const createMainWindow = () => {
     rpc,
   });
 
+  const webviewWithEvents = window.webview as unknown as {
+    on?: (event: string, handler: () => void) => void;
+  };
+
+  if (typeof webviewWithEvents.on === "function") {
+    webviewWithEvents.on("dom-ready", () => {
+      if (mainWindow !== window) {
+        return;
+      }
+
+      isMainViewReady = true;
+      flushPendingWebviewMessages();
+    });
+  } else {
+    queueMicrotask(() => {
+      if (mainWindow !== window) {
+        return;
+      }
+
+      isMainViewReady = true;
+      flushPendingWebviewMessages();
+    });
+  }
+
   window.on("close", () => {
     // On macOS, closing should behave like hide-to-tray when possible.
     if (!isQuitting && isMac) {
@@ -333,6 +403,8 @@ const createMainWindow = () => {
         queueMicrotask(() => {
           if (mainWindow === window && !canUseWindow(window)) {
             mainWindow = null;
+            isMainViewReady = false;
+            pendingWebviewMessages.length = 0;
           }
         });
         void updateTrayMenu();
@@ -344,6 +416,8 @@ const createMainWindow = () => {
 
     if (mainWindow === window) {
       mainWindow = null;
+      isMainViewReady = false;
+      pendingWebviewMessages.length = 0;
     }
 
     if (!isQuitting) {
@@ -376,6 +450,34 @@ const canUseWindow = (window: BrowserWindow | null): window is BrowserWindow => 
   }
 };
 
+const dispatchToWebview = (send: () => void) => {
+  if (!isMainViewReady || !canUseWindow(mainWindow)) {
+    pendingWebviewMessages.push(send);
+    return;
+  }
+
+  try {
+    send();
+  } catch (error) {
+    console.warn("[rpc] Failed to send message to webview", error);
+  }
+};
+
+const flushPendingWebviewMessages = () => {
+  if (!isMainViewReady || !canUseWindow(mainWindow)) {
+    return;
+  }
+
+  const queued = pendingWebviewMessages.splice(0);
+  for (const send of queued) {
+    try {
+      send();
+    } catch (error) {
+      console.warn("[rpc] Failed to send queued message to webview", error);
+    }
+  }
+};
+
 const ensureMainWindow = () => {
   if (canUseWindow(mainWindow)) {
     return { window: mainWindow, created: false };
@@ -394,12 +496,16 @@ const showMainWindow = (view: "dashboard" | "settings" = "dashboard") => {
 
   window.show();
   window.focus();
-  rpc.send.navigate({ view });
+  dispatchToWebview(() => {
+    rpc.send.navigate({ view });
+  });
 };
 
 const hideMainWindow = () => {
   if (!canUseWindow(mainWindow)) {
     mainWindow = null;
+    isMainViewReady = false;
+    pendingWebviewMessages.length = 0;
     return;
   }
 
@@ -432,18 +538,25 @@ const runScanWithNotifications = async (fullScan = false) => {
   isScanning = true;
   void updateTrayMenu();
   void refreshApplicationMenu();
-  rpc.send.scanStarted({});
+  dispatchToWebview(() => {
+    rpc.send.scanStarted({});
+  });
 
   try {
-    const result = await runScan({ fullScan });
+    const effectiveFullScan = fullScan || (await dailyStoreNeedsRepoBackfill());
+    const result = await runScan({ fullScan: effectiveFullScan });
     lastScanAt = new Date().toISOString();
 
-    rpc.send.scanCompleted({ scanned: result.scanned, total: result.total });
-    rpc.send.sessionsUpdated({
-      scanResult: {
-        scanned: result.scanned,
-        total: result.total,
-      },
+    dispatchToWebview(() => {
+      rpc.send.scanCompleted({ scanned: result.scanned, total: result.total });
+    });
+    dispatchToWebview(() => {
+      rpc.send.sessionsUpdated({
+        scanResult: {
+          scanned: result.scanned,
+          total: result.total,
+        },
+      });
     });
 
     return result;
@@ -470,6 +583,10 @@ const configureBackgroundScan = (intervalMinutes: number) => {
 };
 
 const refreshApplicationMenu = async () => {
+  if (!CUSTOM_MENU_ENABLED) {
+    return;
+  }
+
   const settings = await getSettings();
 
   ApplicationMenu.setApplicationMenu([
@@ -478,7 +595,17 @@ const refreshApplicationMenu = async () => {
           {
             label: "AI Wrapped",
             submenu: [
-              { role: "about" },
+              {
+                label: "Show Dashboard",
+                action: "show-dashboard",
+                data: { source: "application-menu" },
+              },
+              {
+                label: "Rescan Sessions",
+                action: "rescan-sessions",
+                data: { source: "application-menu" },
+                enabled: !isScanning,
+              },
               { type: "separator" },
               {
                 label: "Quit",
@@ -507,18 +634,6 @@ const refreshApplicationMenu = async () => {
       ],
     },
     {
-      label: "Edit",
-      submenu: [
-        { role: "undo" },
-        { role: "redo" },
-        { type: "separator" },
-        { role: "cut" },
-        { role: "copy" },
-        { role: "paste" },
-        { role: "selectAll" },
-      ],
-    },
-    {
       label: "View",
       submenu: [
         {
@@ -538,7 +653,9 @@ const toggleDarkMode = async () => {
   const nextTheme: AppSettings["theme"] = current.theme === "dark" ? "light" : "dark";
   const next = await updateSettings({ theme: nextTheme });
 
-  rpc.send.themeChanged({ theme: next.theme });
+  dispatchToWebview(() => {
+    rpc.send.themeChanged({ theme: next.theme });
+  });
   void refreshApplicationMenu();
 };
 
@@ -600,7 +717,9 @@ const rpc = BrowserView.defineRPC<AIStatsRPC>({
         const next = await updateSettings(patch);
         configureBackgroundScan(next.scanIntervalMinutes);
         void refreshApplicationMenu();
-        rpc.send.themeChanged({ theme: next.theme });
+        dispatchToWebview(() => {
+          rpc.send.themeChanged({ theme: next.theme });
+        });
         return true;
       },
     },
@@ -626,9 +745,16 @@ mainWindow = createMainWindow();
 createTray();
 
 ApplicationMenu.on("application-menu-clicked", (event: unknown) => {
+  if (!CUSTOM_MENU_ENABLED) {
+    return;
+  }
+
   const action = getEventAction(event);
 
   switch (action) {
+    case "show-dashboard":
+      showMainWindow("dashboard");
+      break;
     case "rescan-sessions":
       void runScanWithNotifications(false);
       break;

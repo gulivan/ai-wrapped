@@ -1,6 +1,13 @@
 {
   "name": "ai-wrapped",
-  "private": true,
+  "version": "0.0.1",
+  "description": "Your year in AI — a Spotify Wrapped-style dashboard for AI coding agents",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gulivan/ai-wrapped.git"
+  },
+  "keywords": ["ai", "wrapped", "claude", "codex", "gemini", "copilot", "stats", "dashboard"],
   "scripts": {
     "dev": "bun run build && electrobun dev --console",
     "dev:hmr": "bun run build && concurrently \"vite --port 5173\" \"electrobun dev --console\"",

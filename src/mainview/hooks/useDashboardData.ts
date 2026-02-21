@@ -5,6 +5,7 @@ import { SOURCE_LABELS } from "../lib/constants";
 import { rpcRequest, useRPC } from "./useRPC";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const MIN_SELECTABLE_YEAR = 2024;
 
 const daysAgoISO = (daysAgo: number): string => {
   const date = new Date();
@@ -27,6 +28,50 @@ const rangeLengthDays = (dateFrom: string, dateTo: string): number => {
   const to = Date.parse(`${dateTo}T00:00:00Z`);
   if (Number.isNaN(from) || Number.isNaN(to) || to < from) return 0;
   return Math.floor((to - from) / ONE_DAY_MS) + 1;
+};
+
+const currentYear = (): number => new Date().getFullYear();
+
+export type DashboardDateRange = "last365" | `year:${number}`;
+
+export interface DashboardDateRangeOption {
+  value: DashboardDateRange;
+  label: string;
+}
+
+const parseYearSelection = (selection: DashboardDateRange): number | null => {
+  if (!selection.startsWith("year:")) return null;
+  const parsed = Number(selection.slice(5));
+  return Number.isInteger(parsed) ? parsed : null;
+};
+
+const buildRangeOptions = (): DashboardDateRangeOption[] => {
+  const thisYear = currentYear();
+  const options: DashboardDateRangeOption[] = [{ value: "last365", label: "Last 365 days" }];
+  for (let year = thisYear; year >= MIN_SELECTABLE_YEAR; year -= 1) {
+    options.push({
+      value: `year:${year}` as DashboardDateRange,
+      label: year === thisYear ? `${year} (Current year)` : String(year),
+    });
+  }
+  return options;
+};
+
+const resolveDateRange = (selection: DashboardDateRange): { dateFrom: string; dateTo: string } => {
+  const today = todayISO();
+  const selectedYear = parseYearSelection(selection);
+
+  if (selectedYear === null) {
+    return {
+      dateFrom: daysAgoISO(364),
+      dateTo: today,
+    };
+  }
+
+  return {
+    dateFrom: `${selectedYear}-01-01`,
+    dateTo: selectedYear === currentYear() ? today : `${selectedYear}-12-31`,
+  };
 };
 
 export interface TimelinePoint {
@@ -54,6 +99,8 @@ export interface ModelBreakdown {
   costUsd: number;
 }
 
+export type DailyAgentTokensByDate = Record<string, Record<SessionSource, number>>;
+
 export interface DashboardTotals {
   totalSessions: number;
   totalTokens: number;
@@ -80,12 +127,39 @@ const emptyTotals: DashboardTotals = {
   mostExpensiveDay: null,
 };
 
+const createEmptySourceTokenMap = (): Record<SessionSource, number> => ({
+  claude: 0,
+  codex: 0,
+  gemini: 0,
+  opencode: 0,
+  droid: 0,
+  copilot: 0,
+});
+
+const buildDailyAgentTokensByDate = (
+  rowsBySource: Array<{ source: SessionSource; rows: DailyAggregate[] }>,
+): DailyAgentTokensByDate => {
+  const byDate: DailyAgentTokensByDate = {};
+
+  for (const { source, rows } of rowsBySource) {
+    for (const row of rows) {
+      const current = byDate[row.date] ?? createEmptySourceTokenMap();
+      current[source] = tokenTotal(row.tokens);
+      byDate[row.date] = current;
+    }
+  }
+
+  return byDate;
+};
+
 export const useDashboardData = () => {
   const rpc = useRPC();
-  const [dateFrom] = useState<string>(daysAgoISO(364));
-  const [dateTo] = useState<string>(todayISO());
+  const [selectedRange, setSelectedRange] = useState<DashboardDateRange>("last365");
+  const rangeOptions = useMemo<DashboardDateRangeOption[]>(() => buildRangeOptions(), []);
+  const { dateFrom, dateTo } = useMemo(() => resolveDateRange(selectedRange), [selectedRange]);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [timeline, setTimeline] = useState<DailyAggregate[]>([]);
+  const [dailyAgentTokensByDate, setDailyAgentTokensByDate] = useState<DailyAgentTokensByDate>({});
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -94,13 +168,22 @@ export const useDashboardData = () => {
     setError(null);
 
     try {
-      const [summaryResult, timelineResult] = await Promise.all([
+      const [summaryResult, timelineResult, ...timelineBySourceResults] = await Promise.all([
         rpcRequest("getDashboardSummary", { dateFrom, dateTo }),
         rpcRequest("getDailyTimeline", { dateFrom, dateTo }),
+        ...SESSION_SOURCES.map((source) => rpcRequest("getDailyTimeline", { dateFrom, dateTo, source })),
       ]);
 
       setSummary(summaryResult);
       setTimeline(timelineResult);
+      setDailyAgentTokensByDate(
+        buildDailyAgentTokensByDate(
+          timelineBySourceResults.map((rows, index) => ({
+            source: SESSION_SOURCES[index],
+            rows,
+          })),
+        ),
+      );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to load dashboard");
     } finally {
@@ -193,8 +276,11 @@ export const useDashboardData = () => {
         costUsd: entry.costUsd,
       }))
       .filter((entry) => entry.sessions > 0 || entry.tokens > 0 || entry.costUsd > 0)
-      .sort((left, right) => right.tokens - left.tokens)
-      .slice(0, 8);
+      .sort((left, right) => {
+        if (right.tokens !== left.tokens) return right.tokens - left.tokens;
+        if (right.sessions !== left.sessions) return right.sessions - left.sessions;
+        return right.costUsd - left.costUsd;
+      });
   }, [summary]);
 
   const topRepos = useMemo(
@@ -212,6 +298,10 @@ export const useDashboardData = () => {
   return {
     dateFrom,
     dateTo,
+    selectedRange,
+    setSelectedRange,
+    rangeOptions,
+    dailyAgentTokensByDate,
     summary,
     timeline: timelinePoints,
     loading,

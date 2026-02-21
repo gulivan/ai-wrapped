@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import DashboardCharts from "./DashboardCharts";
 import EmptyState from "./EmptyState";
 import StatsCards, { AnimatedNumber } from "./StatsCards";
-import { useDashboardData } from "../hooks/useDashboardData";
+import { useDashboardData, type DashboardDateRange } from "../hooks/useDashboardData";
 import { formatDate, formatDuration, formatNumber } from "../lib/formatters";
 
 const useInView = <T extends HTMLElement>(threshold = 0.35) => {
@@ -45,6 +45,10 @@ const Dashboard = () => {
     modelBreakdown,
     agentBreakdown,
     topRepos,
+    selectedRange,
+    setSelectedRange,
+    rangeOptions,
+    dailyAgentTokensByDate,
   } = useDashboardData();
 
   const timeCard = useInView<HTMLDivElement>(0.4);
@@ -79,10 +83,33 @@ const Dashboard = () => {
   const ringRadius = 58;
   const ringCircumference = 2 * Math.PI * ringRadius;
   const ringOffset = ringCircumference - (activeDayCoverage / 100) * ringCircumference;
+  const handleRangeChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const next = event.target.value as DashboardDateRange;
+    if (!rangeOptions.some((option) => option.value === next)) return;
+    setSelectedRange(next);
+  };
 
   return (
     <div className="wrapped-scroll">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pb-12 pt-20 sm:px-6">
+        <section className="wrapped-tile self-end p-3 sm:p-4">
+          <label className="flex items-center gap-3 text-xs uppercase tracking-[0.16em] text-slate-300">
+            Range
+            <select
+              value={selectedRange}
+              onChange={handleRangeChange}
+              aria-label="Dashboard range"
+              className="min-w-40 rounded-lg border border-white/20 bg-slate-950/65 px-3 py-2 text-sm font-medium normal-case tracking-normal text-slate-100 outline-none transition focus:border-sky-300"
+            >
+              {rangeOptions.map((option) => (
+                <option key={option.value} value={option.value} className="bg-slate-950 text-slate-100">
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </section>
+
         <section className="wrapped-card wrapped-card-hero">
           <header className="mb-6">
             <p className="wrapped-kicker">Your Year In Code</p>
@@ -188,6 +215,7 @@ const Dashboard = () => {
           modelBreakdown={modelBreakdown}
           agentBreakdown={agentBreakdown}
           timeline={timeline}
+          dailyAgentTokensByDate={dailyAgentTokensByDate}
           topRepos={topRepos}
           totalCostUsd={totals.totalCostUsd}
           dailyAverageCostUsd={totals.dailyAverageCostUsd}

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionEvent } from "./session-schema";
-import { normalizeSession } from "./normalizer";
+import { normalizeSession, normalizeTokenUsage } from "./normalizer";
 import type { RawParsedSession } from "./parsers/types";
 
 const makeEvent = (overrides: Partial<SessionEvent>): SessionEvent => ({
@@ -62,5 +62,40 @@ describe("normalizeSession event ids", () => {
     const ids = result.events.map((event) => event.id);
     expect(ids).toEqual(["session-c:event:dup", "session-c:event:dup:dup:1"]);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("normalizeTokenUsage", () => {
+  test("supports prompt/completion and cached/reasoning fields", () => {
+    const usage = normalizeTokenUsage({
+      prompt_tokens: 1200,
+      completion_tokens: 300,
+      cached_input_tokens: 700,
+      reasoning_output_tokens: 90,
+    });
+
+    expect(usage).toEqual({
+      inputTokens: 1200,
+      outputTokens: 300,
+      cacheReadTokens: 700,
+      cacheWriteTokens: 0,
+      reasoningTokens: 90,
+    });
+  });
+
+  test("supports nested prompt_tokens_details cached tokens", () => {
+    const usage = normalizeTokenUsage({
+      input_tokens: 512,
+      output_tokens: 128,
+      prompt_tokens_details: { cached_tokens: 256 },
+    });
+
+    expect(usage).toEqual({
+      inputTokens: 512,
+      outputTokens: 128,
+      cacheReadTokens: 256,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+    });
   });
 });

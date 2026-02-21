@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
-import type { SessionSource } from "../../shared/schema";
+import type { SessionSource, TokenUsage } from "../../shared/schema";
 import type { FileCandidate } from "../discovery";
 import type { SessionEvent } from "../session-schema";
 import { extractText, normalizeTimestamp, normalizeTokenUsage, resolveEventKind } from "../normalizer";
@@ -99,6 +99,80 @@ const getFirstString = (...values: unknown[]): string | null => {
   return null;
 };
 
+const getNested = (value: unknown, path: string[]): unknown => {
+  let current: unknown = value;
+  for (const part of path) {
+    if (!current || typeof current !== "object" || !(part in (current as Record<string, unknown>))) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+};
+
+const tokenUsageTotal = (tokens: TokenUsage): number =>
+  tokens.inputTokens +
+  tokens.outputTokens +
+  tokens.cacheReadTokens +
+  tokens.cacheWriteTokens +
+  tokens.reasoningTokens;
+
+const subtractTokenUsage = (current: TokenUsage, previous: TokenUsage | null): TokenUsage => ({
+  inputTokens: Math.max(0, current.inputTokens - (previous?.inputTokens ?? 0)),
+  outputTokens: Math.max(0, current.outputTokens - (previous?.outputTokens ?? 0)),
+  cacheReadTokens: Math.max(0, current.cacheReadTokens - (previous?.cacheReadTokens ?? 0)),
+  cacheWriteTokens: Math.max(0, current.cacheWriteTokens - (previous?.cacheWriteTokens ?? 0)),
+  reasoningTokens: Math.max(0, current.reasoningTokens - (previous?.reasoningTokens ?? 0)),
+});
+
+const toTokenCountEventUsage = (tokens: TokenUsage | null): TokenUsage | null => {
+  if (!tokens) return null;
+
+  const normalized: TokenUsage = {
+    inputTokens: Math.max(0, tokens.inputTokens - tokens.cacheReadTokens),
+    outputTokens: Math.max(0, tokens.outputTokens - tokens.reasoningTokens),
+    cacheReadTokens: tokens.cacheReadTokens,
+    cacheWriteTokens: tokens.cacheWriteTokens,
+    reasoningTokens: tokens.reasoningTokens,
+  };
+
+  return tokenUsageTotal(normalized) > 0 ? normalized : null;
+};
+
+const isTokenCountType = (rawType: string | null): boolean => {
+  if (!rawType) return false;
+  return rawType.toLowerCase() === "token_count";
+};
+
+const extractTokenCountUsage = (
+  payload: Record<string, unknown> | null,
+  previousTotals: TokenUsage | null,
+): { shouldOverride: boolean; tokens: SessionEvent["tokens"]; nextTotals: TokenUsage | null } => {
+  const info = asRecord(payload?.info);
+  const totalUsage = normalizeTokenUsage(info?.total_token_usage);
+  const lastUsage = normalizeTokenUsage(info?.last_token_usage);
+
+  if (totalUsage) {
+    const deltaUsage = subtractTokenUsage(totalUsage, previousTotals);
+    const deltaTokens = toTokenCountEventUsage(deltaUsage);
+    if (deltaTokens) {
+      return { shouldOverride: true, tokens: deltaTokens, nextTotals: totalUsage };
+    }
+
+    if (!previousTotals && lastUsage) {
+      return { shouldOverride: true, tokens: toTokenCountEventUsage(lastUsage), nextTotals: totalUsage };
+    }
+
+    return { shouldOverride: true, tokens: null, nextTotals: totalUsage };
+  }
+
+  if (lastUsage) {
+    return { shouldOverride: true, tokens: toTokenCountEventUsage(lastUsage), nextTotals: previousTotals };
+  }
+
+  return { shouldOverride: false, tokens: null, nextTotals: previousTotals };
+};
+
 const isDeltaEvent = (type: unknown, payload: Record<string, unknown> | null): boolean => {
   if (typeof type === "string" && type.toLowerCase().includes("delta")) return true;
   if (!payload) return false;
@@ -124,7 +198,8 @@ const buildEventFromRecord = (
   sessionId: string,
   lineIndex: number,
   modelFallback: string | null,
-): SessionEvent => {
+  previousTokenCountTotals: TokenUsage | null,
+): { event: SessionEvent; nextTokenCountTotals: TokenUsage | null } => {
   const payload = asRecord(record.payload);
   const message = asRecord(record.message);
 
@@ -134,6 +209,7 @@ const buildEventFromRecord = (
     message?.type,
     (record._kind as string | undefined) ?? null,
   );
+  const payloadType = getFirstString(payload?.type, message?.type);
   const role = getFirstString(record.role, payload?.role, message?.role);
 
   const text = extractText(
@@ -161,10 +237,26 @@ const buildEventFromRecord = (
 
   const toolInputValue = payload?.arguments ?? payload?.input ?? record.toolInput ?? message?.input;
   const toolOutputValue = payload?.output ?? payload?.result ?? record.toolOutput ?? message?.output;
-
-  const tokens = normalizeTokenUsage(payload?.tokens ?? payload?.usage ?? message?.usage ?? record.tokens);
+  const tokenCountUsage = isTokenCountType(payloadType) || isTokenCountType(rawType)
+    ? extractTokenCountUsage(payload, previousTokenCountTotals)
+    : { shouldOverride: false, tokens: null, nextTotals: previousTokenCountTotals };
+  const tokensPayload =
+    payload?.tokens ??
+    payload?.usage ??
+    getNested(payload, ["info", "last_token_usage"]) ??
+    getNested(payload, ["completion", "usage"]) ??
+    message?.usage ??
+    message?.tokens ??
+    record.tokens ??
+    record.usage ??
+    getNested(record, ["completion", "usage"]) ??
+    getNested(record, ["data", "usage"]);
+  const fallbackTokens = normalizeTokenUsage(tokensPayload);
+  const tokens = tokenCountUsage.shouldOverride ? tokenCountUsage.tokens : fallbackTokens;
 
   return {
+    nextTokenCountTotals: tokenCountUsage.nextTotals,
+    event: {
     id: eventId,
     sessionId,
     kind: resolveEventKind(rawType, role),
@@ -180,6 +272,7 @@ const buildEventFromRecord = (
     isDelta: isDeltaEvent(rawType, payload),
     tokens,
     costUsd: null,
+    },
   };
 };
 
@@ -199,6 +292,7 @@ export const parseGeneric = async (
     let model: string | null = null;
     let cliVersion: string | null = null;
     let title: string | null = null;
+    let previousTokenCountTotals: TokenUsage | null = null;
 
     const events: SessionEvent[] = [];
 
@@ -212,7 +306,14 @@ export const parseGeneric = async (
       cliVersion = cliVersion ?? getFirstString(record.version, payload?.cli_version, payload?.copilotVersion);
       title = title ?? getFirstString(record.title, record.summary);
 
-      const event = buildEventFromRecord(record, sessionId, index, model);
+      const { event, nextTokenCountTotals } = buildEventFromRecord(
+        record,
+        sessionId,
+        index,
+        model,
+        previousTokenCountTotals,
+      );
+      previousTokenCountTotals = nextTokenCountTotals;
       events.push(event);
     }
 

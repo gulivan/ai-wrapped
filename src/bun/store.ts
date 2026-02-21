@@ -29,6 +29,7 @@ export interface DayStats {
 export interface DailyAggregateEntry {
   bySource: Record<string, DayStats>;
   byModel: Record<string, DayStats>;
+  byRepo: Record<string, DayStats>;
   totals: DayStats;
 }
 
@@ -138,9 +139,17 @@ const normalizeDailyStore = (value: unknown): DailyStore => {
       }
     }
 
+    const byRepo: Record<string, DayStats> = {};
+    if (isRecord(rawEntry.byRepo)) {
+      for (const [repo, rawStats] of Object.entries(rawEntry.byRepo)) {
+        byRepo[repo] = normalizeDayStats(rawStats);
+      }
+    }
+
     output[date] = {
       bySource,
       byModel,
+      byRepo,
       totals: normalizeDayStats(rawEntry.totals),
     };
   }
@@ -231,6 +240,25 @@ export const readDailyStore = async (): Promise<DailyStore> => {
 export const writeDailyStore = async (daily: DailyStore): Promise<void> => {
   dailyCache = normalizeDailyStore(daily);
   await writeJson(DAILY_PATH, dailyCache);
+};
+
+export const dailyStoreMissingRepoDimension = async (): Promise<boolean> => {
+  const raw = await readJson<unknown>(DAILY_PATH, {});
+  if (!isRecord(raw)) {
+    return false;
+  }
+
+  for (const rawEntry of Object.values(raw)) {
+    if (!isRecord(rawEntry)) {
+      continue;
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(rawEntry, "byRepo")) {
+      return true;
+    }
+  }
+
+  return false;
 };
 
 export const getSettings = async (): Promise<AppSettings> => {

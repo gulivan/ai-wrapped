@@ -163,13 +163,29 @@ export const normalizeTokenUsage = (value: unknown): TokenUsage | null => {
     return 0;
   };
 
-  const inputTokens = firstNumber(source.inputTokens, source.input_tokens, source.input);
-  const outputTokens = firstNumber(source.outputTokens, source.output_tokens, source.output);
+  const inputTokens = firstNumber(
+    source.inputTokens,
+    source.input_tokens,
+    source.input,
+    source.prompt_tokens,
+    source.promptTokens,
+  );
+  const outputTokens = firstNumber(
+    source.outputTokens,
+    source.output_tokens,
+    source.output,
+    source.completion_tokens,
+    source.completionTokens,
+  );
   const cacheReadTokens = firstNumber(
     source.cacheReadTokens,
     source.cache_read_tokens,
     source.cache_read_input_tokens,
+    source.cached_input_tokens,
+    source.cachedTokens,
+    source.cached_tokens,
     source.cached,
+    getNested(source, ["prompt_tokens_details", "cached_tokens"]),
     getNested(source, ["cache", "read"]),
   );
   const cacheWriteTokens = firstNumber(
@@ -183,6 +199,7 @@ export const normalizeTokenUsage = (value: unknown): TokenUsage | null => {
   const reasoningTokens = firstNumber(
     source.reasoningTokens,
     source.reasoning_tokens,
+    source.reasoning_output_tokens,
     source.reasoning,
     source.thinkingTokens,
     source.thoughts,
@@ -192,18 +209,27 @@ export const normalizeTokenUsage = (value: unknown): TokenUsage | null => {
     "inputTokens" in source ||
     "input_tokens" in source ||
     "input" in source ||
+    "prompt_tokens" in source ||
+    "promptTokens" in source ||
     "outputTokens" in source ||
     "output_tokens" in source ||
     "output" in source ||
+    "completion_tokens" in source ||
+    "completionTokens" in source ||
     "cacheReadTokens" in source ||
     "cache_read_tokens" in source ||
     "cache_read_input_tokens" in source ||
+    "cached_input_tokens" in source ||
+    "cachedTokens" in source ||
+    "cached_tokens" in source ||
     "cache" in source ||
+    "prompt_tokens_details" in source ||
     "cacheWriteTokens" in source ||
     "cache_write_tokens" in source ||
     "cache_creation_input_tokens" in source ||
     "reasoningTokens" in source ||
     "reasoning_tokens" in source ||
+    "reasoning_output_tokens" in source ||
     "thoughts" in source ||
     "thinkingTokens" in source;
 
