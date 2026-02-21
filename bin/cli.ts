@@ -29,12 +29,35 @@ async function getPackageVersion(): Promise<string> {
   return pkg.version;
 }
 
+async function ensureRuntimeBuildDependencies(): Promise<void> {
+  const electrobunPkg = Bun.file(
+    join(PKG_ROOT, "node_modules", "electrobun", "package.json"),
+  );
+  if (await electrobunPkg.exists()) return;
+
+  // bunx extracts ai-wrapped without node_modules, but electrobun expects
+  // ./node_modules/electrobun relative to the app root when building.
+  console.log("  Installing build dependencies...\n");
+  const proc = Bun.spawn([process.execPath, "install", "--production"], {
+    cwd: PKG_ROOT,
+    stdout: "inherit",
+    stderr: "inherit",
+    env: { ...process.env },
+  });
+
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    throw new Error(`Dependency install failed with exit code ${exitCode}`);
+  }
+}
+
 async function buildApp(): Promise<string> {
   const platform = process.platform;
   const arch = process.arch;
 
   // Electrobun build needs to run from the package root
   console.log("  Building app (first run only)...\n");
+  await ensureRuntimeBuildDependencies();
 
   // Run electrobun build from the package directory
   const proc = Bun.spawn(["bunx", "electrobun", "build"], {
