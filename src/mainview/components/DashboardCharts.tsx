@@ -18,7 +18,7 @@ import type { TooltipContentProps } from "recharts";
 import { AnimatedNumber } from "./StatsCards";
 import { formatDate, formatDuration, formatNumber, formatTokens, formatUsd } from "../lib/formatters";
 import { formatHourLabel, hasHourlyActivity } from "../lib/hourly";
-import { computeHeatmapCellSizePx } from "../lib/heatmap";
+import { HEATMAP_GAP_PX, computeHeatmapCellSizePx } from "../lib/heatmap";
 import { SOURCE_COLORS, SOURCE_LABELS } from "../lib/constants";
 import type {
   AgentBreakdown,
@@ -211,7 +211,6 @@ const buildHeatmapWeeks = (cells: HeatmapCell[]): HeatmapWeek[] => {
 const chartWrapperClass = "h-56 w-full sm:h-64";
 const chartRevealClass = "wrapped-chart-reveal";
 const CHART_ANIMATION_MS = 2000;
-const HEATMAP_GAP_PX = 4;
 const HEATMAP_TOOLTIP_HALF_WIDTH_PX = 112;
 const HEATMAP_LEFT_GUTTER_PX = 36;
 const HEATMAP_MONTH_ROW_HEIGHT_PX = 18;

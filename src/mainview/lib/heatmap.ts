@@ -1,7 +1,7 @@
 const HEATMAP_MIN_CELL_PX = 10;
 const HEATMAP_MAX_CELL_PX = 14;
 const HEATMAP_TARGET_WIDTH_PX = 640;
-const HEATMAP_GAP_PX = 4;
+export const HEATMAP_GAP_PX = 4;
 
 export const computeHeatmapCellSizePx = (
   weekCount: number,
