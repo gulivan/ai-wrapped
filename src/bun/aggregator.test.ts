@@ -34,7 +34,7 @@ describe("aggregateSessionsByDate", () => {
       makeSession({ id: "s2", totalCostUsd: 0.75 }),
       makeSession({ id: "s3", repoName: "other-repo", totalCostUsd: 2.0 }),
       makeSession({ id: "s4", repoName: null, totalCostUsd: 3.0 }),
-    ]);
+    ], { timeZone: "UTC" });
 
     const entry = daily["2026-02-21"];
     expect(entry).toBeDefined();
@@ -59,7 +59,7 @@ describe("aggregateSessionsByDate", () => {
         startTime: null,
         parsedAt: "2026-02-21T13:40:00.000Z",
       }),
-    ]);
+    ], { timeZone: "UTC" });
 
     const entry = daily["2026-02-21"];
     expect(entry).toBeDefined();
@@ -68,20 +68,33 @@ describe("aggregateSessionsByDate", () => {
     expect(entry?.totals.sessions).toBe(2);
   });
 
-  test("uses UTC consistently for day and hour buckets", () => {
+  test("uses requested timezone consistently for day and hour buckets", () => {
     const daily = aggregateSessionsByDate([
       makeSession({
         id: "tz-1",
-        startTime: "2026-02-21T00:30:00+09:00",
-        parsedAt: "2026-02-21T00:45:00+09:00",
+        startTime: "2026-02-21T07:30:00.000Z",
+        parsedAt: "2026-02-21T07:45:00.000Z",
       }),
-    ]);
+    ], { timeZone: "America/Los_Angeles" });
 
     const entry = daily["2026-02-20"];
     expect(entry).toBeDefined();
-    expect(entry?.byHour["15"]?.sessions).toBe(1);
-    expect(entry?.byHourSource["15"]?.codex?.sessions).toBe(1);
+    expect(entry?.byHour["23"]?.sessions).toBe(1);
+    expect(entry?.byHourSource["23"]?.codex?.sessions).toBe(1);
     expect(entry?.totals.sessions).toBe(1);
     expect(daily["2026-02-21"]).toBeUndefined();
+  });
+
+  test("falls back to UTC when timezone is invalid", () => {
+    const daily = aggregateSessionsByDate([
+      makeSession({
+        id: "tz-invalid",
+        startTime: "2026-02-21T10:10:00.000Z",
+      }),
+    ], { timeZone: "Invalid/Timezone" });
+
+    const entry = daily["2026-02-21"];
+    expect(entry).toBeDefined();
+    expect(entry?.byHour["10"]?.sessions).toBe(1);
   });
 });

@@ -6,6 +6,8 @@ import {
   type DayStats,
 } from "./store";
 
+const DEFAULT_TIME_ZONE = "UTC";
+
 const addStats = (target: DayStats, source: DayStats): void => {
   target.sessions += source.sessions;
   target.messages += source.messages;
@@ -33,10 +35,51 @@ const parseSessionTimestamp = (session: Session): Date | null => {
   return parsed;
 };
 
-const toDayKey = (session: Session): string => {
+const resolveFormatterTimeZone = (timeZone?: string): string => {
+  const candidate =
+    typeof timeZone === "string" && timeZone.trim().length > 0
+      ? timeZone.trim()
+      : Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (!candidate) {
+    return DEFAULT_TIME_ZONE;
+  }
+
+  try {
+    // Validate the zone before use. Falls back to UTC for invalid identifiers.
+    void new Intl.DateTimeFormat("en-US", { timeZone: candidate });
+    return candidate;
+  } catch {
+    return DEFAULT_TIME_ZONE;
+  }
+};
+
+const formatDateKey = (date: Date, formatter: Intl.DateTimeFormat): string => {
+  const parts = formatter.formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  if (!year || !month || !day) {
+    return date.toISOString().slice(0, 10);
+  }
+
+  return `${year}-${month}-${day}`;
+};
+
+const formatHourKey = (date: Date, formatter: Intl.DateTimeFormat): string | null => {
+  const hourValue = formatter.formatToParts(date).find((part) => part.type === "hour")?.value;
+  if (!hourValue) return null;
+
+  const hourNum = Number(hourValue);
+  if (!Number.isFinite(hourNum)) return null;
+
+  return String(hourNum).padStart(2, "0");
+};
+
+const toDayKey = (session: Session, dateFormatter: Intl.DateTimeFormat): string => {
   const parsed = parseSessionTimestamp(session);
   if (parsed) {
-    return parsed.toISOString().slice(0, 10);
+    return formatDateKey(parsed, dateFormatter);
   }
 
   const fallback = session.startTime ?? session.parsedAt;
@@ -44,13 +87,14 @@ const toDayKey = (session: Session): string => {
     return fallback.slice(0, 10);
   }
 
-  return new Date().toISOString().slice(0, 10);
+  return formatDateKey(new Date(), dateFormatter);
 };
 
-const toHourKey = (session: Session): string | null => {
+const toHourKey = (session: Session, hourFormatter: Intl.DateTimeFormat): string | null => {
   const parsed = parseSessionTimestamp(session);
   if (!parsed) return null;
-  return String(parsed.getUTCHours()).padStart(2, "0");
+
+  return formatHourKey(parsed, hourFormatter);
 };
 
 const toSessionStats = (session: Session): DayStats => ({
@@ -123,11 +167,34 @@ const sortDailyStore = (daily: DailyStore): DailyStore => {
   return output;
 };
 
-export const aggregateSessionsByDate = (sessions: Session[]): DailyStore => {
+export interface AggregateSessionsOptions {
+  timeZone?: string;
+}
+
+export const resolveAggregationTimeZone = (timeZone?: string): string =>
+  resolveFormatterTimeZone(timeZone);
+
+export const aggregateSessionsByDate = (
+  sessions: Session[],
+  options: AggregateSessionsOptions = {},
+): DailyStore => {
+  const timeZone = resolveFormatterTimeZone(options.timeZone);
+  const dateFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const hourFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "2-digit",
+    hourCycle: "h23",
+  });
+
   const daily: DailyStore = {};
 
   for (const session of sessions) {
-    const date = toDayKey(session);
+    const date = toDayKey(session, dateFormatter);
     const entry = ensureDateEntry(daily, date);
     const modelKey = session.model && session.model.trim().length > 0 ? session.model : "unknown";
     const repoKey = toRepoKey(session.repoName);
@@ -143,7 +210,7 @@ export const aggregateSessionsByDate = (sessions: Session[]): DailyStore => {
       entry.byRepo[repoKey] = createEmptyDayStats();
     }
 
-    const hourKey = toHourKey(session);
+    const hourKey = toHourKey(session, hourFormatter);
     if (hourKey !== null) {
       if (!entry.byHour[hourKey]) {
         entry.byHour[hourKey] = createEmptyDayStats();

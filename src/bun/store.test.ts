@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { rawDailyStoreMissingHourDimension } from "./store";
+import { rawAggregationMetaNeedsTimeZoneBackfill, rawDailyStoreMissingHourDimension } from "./store";
 
 describe("rawDailyStoreMissingHourDimension", () => {
   test("returns false for non-record input", () => {
@@ -98,6 +98,46 @@ describe("rawDailyStoreMissingHourDimension", () => {
           byHourSource: {},
         },
       }),
+    ).toBe(false);
+  });
+});
+
+describe("rawAggregationMetaNeedsTimeZoneBackfill", () => {
+  test("returns true when meta is missing or malformed", () => {
+    expect(rawAggregationMetaNeedsTimeZoneBackfill(null, "America/Los_Angeles")).toBe(true);
+    expect(rawAggregationMetaNeedsTimeZoneBackfill({}, "America/Los_Angeles")).toBe(true);
+    expect(
+      rawAggregationMetaNeedsTimeZoneBackfill(
+        { version: "1", timeZone: "America/Los_Angeles" },
+        "America/Los_Angeles",
+      ),
+    ).toBe(true);
+  });
+
+  test("returns true when version changes", () => {
+    expect(
+      rawAggregationMetaNeedsTimeZoneBackfill(
+        { version: 2, timeZone: "America/Los_Angeles" },
+        "America/Los_Angeles",
+      ),
+    ).toBe(true);
+  });
+
+  test("returns true when timezone changes", () => {
+    expect(
+      rawAggregationMetaNeedsTimeZoneBackfill(
+        { version: 1, timeZone: "UTC" },
+        "America/Los_Angeles",
+      ),
+    ).toBe(true);
+  });
+
+  test("returns false for matching version and timezone", () => {
+    expect(
+      rawAggregationMetaNeedsTimeZoneBackfill(
+        { version: 1, timeZone: "America/Los_Angeles" },
+        "America/Los_Angeles",
+      ),
     ).toBe(false);
   });
 });

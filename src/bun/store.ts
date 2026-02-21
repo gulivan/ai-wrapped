@@ -37,10 +37,17 @@ export interface DailyAggregateEntry {
 
 export type DailyStore = Record<string, DailyAggregateEntry>;
 
+export interface AggregationMeta {
+  version: number;
+  timeZone: string;
+}
+
 const DATA_DIR = join(homedir(), ".ai-wrapped");
 const SCAN_STATE_PATH = join(DATA_DIR, "scan-state.json");
 const DAILY_PATH = join(DATA_DIR, "daily.json");
+const AGGREGATION_META_PATH = join(DATA_DIR, "aggregation-meta.json");
 const SETTINGS_PATH = join(DATA_DIR, "settings.json");
+const AGGREGATION_META_VERSION = 1;
 
 const DEFAULT_SETTINGS: AppSettings = {
   scanOnLaunch: true,
@@ -179,6 +186,29 @@ const normalizeDailyStore = (value: unknown): DailyStore => {
   return output;
 };
 
+const normalizeAggregationMeta = (value: unknown): AggregationMeta | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const version = value.version;
+  const timeZone = value.timeZone;
+  if (
+    typeof version !== "number" ||
+    !Number.isFinite(version) ||
+    !Number.isInteger(version) ||
+    typeof timeZone !== "string" ||
+    timeZone.trim().length === 0
+  ) {
+    return null;
+  }
+
+  return {
+    version,
+    timeZone: timeZone.trim(),
+  };
+};
+
 const normalizeScanState = (value: unknown): ScanStateStore => {
   if (!isRecord(value)) {
     return {};
@@ -264,6 +294,26 @@ export const writeDailyStore = async (daily: DailyStore): Promise<void> => {
   await writeJson(DAILY_PATH, dailyCache);
 };
 
+const rawDailyStoreHasSessions = (raw: unknown): boolean => {
+  if (!isRecord(raw)) {
+    return false;
+  }
+
+  for (const rawEntry of Object.values(raw)) {
+    if (!isRecord(rawEntry)) {
+      continue;
+    }
+
+    const totals = isRecord(rawEntry.totals) ? rawEntry.totals : null;
+    const hasSessions = totals && typeof totals.sessions === "number" && totals.sessions > 0;
+    if (hasSessions) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
 export const dailyStoreMissingRepoDimension = async (): Promise<boolean> => {
   const raw = await readJson<unknown>(DAILY_PATH, {});
   if (!isRecord(raw)) {
@@ -321,9 +371,50 @@ export const rawDailyStoreMissingHourDimension = (raw: unknown): boolean => {
   return false;
 };
 
+export const rawAggregationMetaNeedsTimeZoneBackfill = (
+  rawMeta: unknown,
+  currentTimeZone: string,
+): boolean => {
+  const normalizedCurrent =
+    typeof currentTimeZone === "string" && currentTimeZone.trim().length > 0
+      ? currentTimeZone.trim()
+      : "UTC";
+  const meta = normalizeAggregationMeta(rawMeta);
+  if (!meta) {
+    return true;
+  }
+
+  if (meta.version !== AGGREGATION_META_VERSION) {
+    return true;
+  }
+
+  return meta.timeZone !== normalizedCurrent;
+};
+
 export const dailyStoreMissingHourDimension = async (): Promise<boolean> => {
   const raw = await readJson<unknown>(DAILY_PATH, {});
   return rawDailyStoreMissingHourDimension(raw);
+};
+
+export const dailyStoreNeedsTimeZoneBackfill = async (
+  currentTimeZone: string,
+): Promise<boolean> => {
+  const rawDaily = await readJson<unknown>(DAILY_PATH, {});
+  if (!rawDailyStoreHasSessions(rawDaily)) {
+    return false;
+  }
+
+  const rawMeta = await readJson<unknown>(AGGREGATION_META_PATH, null);
+  return rawAggregationMetaNeedsTimeZoneBackfill(rawMeta, currentTimeZone);
+};
+
+export const writeAggregationMeta = async (timeZone: string): Promise<void> => {
+  const normalizedTimeZone =
+    typeof timeZone === "string" && timeZone.trim().length > 0 ? timeZone.trim() : "UTC";
+  await writeJson<AggregationMeta>(AGGREGATION_META_PATH, {
+    version: AGGREGATION_META_VERSION,
+    timeZone: normalizedTimeZone,
+  });
 };
 
 export const getSettings = async (): Promise<AppSettings> => {
@@ -344,5 +435,6 @@ export const paths = {
   dataDir: DATA_DIR,
   scanState: SCAN_STATE_PATH,
   daily: DAILY_PATH,
+  aggregationMeta: AGGREGATION_META_PATH,
   settings: SETTINGS_PATH,
 };

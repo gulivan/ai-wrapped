@@ -1,14 +1,25 @@
 import type { SessionSource } from "../shared/schema";
-import { aggregateSessionsByDate, mergeDailyAggregates } from "./aggregator";
+import {
+  aggregateSessionsByDate,
+  mergeDailyAggregates,
+  resolveAggregationTimeZone,
+} from "./aggregator";
 import { discoverAll } from "./discovery";
 import { normalizeSession } from "./normalizer";
 import { parseFile } from "./parsers";
 import type { Session } from "./session-schema";
-import { readDailyStore, readScanState, writeDailyStore, writeScanState } from "./store";
+import {
+  readDailyStore,
+  readScanState,
+  writeAggregationMeta,
+  writeDailyStore,
+  writeScanState,
+} from "./store";
 
 export interface ScanOptions {
   fullScan?: boolean;
   sources?: SessionSource[];
+  timeZone?: string;
 }
 
 export interface ScanResult {
@@ -18,6 +29,7 @@ export interface ScanResult {
 }
 
 export const runScan = async (options: ScanOptions = {}): Promise<ScanResult> => {
+  const aggregationTimeZone = resolveAggregationTimeZone(options.timeZone);
   const candidates = await discoverAll(options.sources);
   const scanState = await readScanState();
 
@@ -62,11 +74,16 @@ export const runScan = async (options: ScanOptions = {}): Promise<ScanResult> =>
   await writeScanState(scanState);
 
   if (options.fullScan) {
-    await writeDailyStore(aggregateSessionsByDate(sessions));
+    await writeDailyStore(aggregateSessionsByDate(sessions, { timeZone: aggregationTimeZone }));
+    await writeAggregationMeta(aggregationTimeZone);
   } else if (sessions.length > 0) {
     const existingDaily = await readDailyStore();
-    const nextDaily = mergeDailyAggregates(existingDaily, aggregateSessionsByDate(sessions));
+    const nextDaily = mergeDailyAggregates(
+      existingDaily,
+      aggregateSessionsByDate(sessions, { timeZone: aggregationTimeZone }),
+    );
     await writeDailyStore(nextDaily);
+    await writeAggregationMeta(aggregationTimeZone);
   }
 
   return {
