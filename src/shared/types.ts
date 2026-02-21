@@ -42,6 +42,7 @@ export type AIStatsRPC = {
     };
     messages: {
       log: { msg: string; level?: "info" | "warn" | "error" };
+      openExternal: { url: string };
     };
   }>;
 

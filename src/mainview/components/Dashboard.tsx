@@ -170,7 +170,7 @@ const Dashboard = () => {
   const ringRadius = 58;
   const ringCircumference = 2 * Math.PI * ringRadius;
   const ringOffset = ringCircumference - (activeDayCoverage / 100) * ringCircumference;
-  const heroCopy = useMemo<{ kicker: string; title: string }>(() => {
+  const heroCopy = (() => {
     if (selectedRange === "last7") {
       return { kicker: "Your Last 7 Days In Code", title: "Your AI Coding Week" };
     }
@@ -200,7 +200,7 @@ const Dashboard = () => {
     }
 
     return { kicker: "Your Time In Code", title: "Your AI Coding Story" };
-  }, [selectedRange]);
+  })();
 
   return (
     <>

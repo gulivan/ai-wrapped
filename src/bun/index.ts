@@ -703,6 +703,8 @@ const createTray = () => {
   void updateTrayMenu();
 };
 
+const ALLOWED_EXTERNAL_HOSTS = new Set(["x.com", "www.x.com", "github.com", "www.github.com"]);
+
 const rpc = BrowserView.defineRPC<AIStatsRPC>({
   handlers: {
     requests: {
@@ -731,6 +733,22 @@ const rpc = BrowserView.defineRPC<AIStatsRPC>({
       },
     },
     messages: {
+      openExternal: ({ url }) => {
+        try {
+          const parsed = new URL(url);
+          const protocolAllowed = parsed.protocol === "https:" || parsed.protocol === "http:";
+          const hostAllowed = ALLOWED_EXTERNAL_HOSTS.has(parsed.hostname.toLowerCase());
+          if (!protocolAllowed || !hostAllowed) {
+            console.warn(`[rpc] Rejected openExternal for disallowed target: ${url}`);
+            return;
+          }
+          void Bun.$`open ${url}`.quiet().catch((error) => {
+            console.warn(`[rpc] Failed to open URL: ${url}`, error);
+          });
+        } catch {
+          console.warn(`[rpc] Rejected openExternal for invalid URL: ${url}`);
+        }
+      },
       log: ({ msg, level }) => {
         if (level === "warn") {
           console.warn(`[webview] ${msg}`);
