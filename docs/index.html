@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI Wrapped — Your year in AI coding agents</title>
-  <meta name="description" content="Spotify Wrapped-style desktop dashboard for your AI coding agent activity. Track tokens, costs, and usage across Claude Code, Codex, Gemini, Copilot, and more.">
+  <meta name="description" content="Desktop dashboard for your AI coding agent activity. Track tokens, costs, and usage across Claude Code, Codex, Gemini, Copilot, and more. Fully local.">
   <meta property="og:title" content="AI Wrapped">
-  <meta property="og:description" content="Spotify Wrapped-style desktop dashboard for your AI coding agent activity.">
+  <meta property="og:description" content="Desktop dashboard for your AI coding agent activity. Fully local.">
   <meta property="og:image" content="icon.png">
   <link rel="icon" href="icon.png" type="image/png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -291,6 +291,31 @@
     /* --- Footer --- */
     footer { border-top: 1px solid var(--border-subtle); }
 
+    /* --- Package manager tabs --- */
+    .pkg-tab {
+      font-family: "JetBrains Mono", "Menlo", monospace;
+      font-size: 0.78rem;
+      font-weight: 500;
+      padding: 0.5rem 1rem;
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-bottom: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: color 0.2s, background 0.2s;
+    }
+    .pkg-tab:first-child { border-radius: 0.8rem 0 0 0; }
+    .pkg-tab:last-child { border-radius: 0 0.8rem 0 0; }
+    .pkg-tab:not(:first-child) { border-left: none; }
+    .pkg-tab.active {
+      background: rgba(9,17,38,0.65);
+      color: var(--text-primary);
+    }
+    .pkg-tab:not(.active):hover {
+      color: var(--text-primary);
+      background: rgba(9,17,38,0.3);
+    }
+
     /* --- Scroll fade-in --- */
     .reveal {
       opacity: 0;
@@ -323,17 +348,35 @@
         <h1 class="headline">
           AI <span class="gradient-text">Wrapped</span>
         </h1>
-        <p style="max-width:34rem;margin:1rem auto 2rem;font-size:1.1rem;color:var(--text-muted);line-height:1.6;">
-          A Spotify Wrapped-style desktop dashboard for your AI coding agents.
-          See your tokens, costs, and activity — beautifully visualized.
+        <p style="max-width:34rem;margin:1rem auto 0.75rem;font-size:1.1rem;color:var(--text-muted);line-height:1.6;">
+          A desktop dashboard for your AI coding agents.
+          See your tokens, costs, and activity across all agents in one place.
         </p>
-        <div style="display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap;">
-          <a href="https://github.com/gulivan/ai-wrapped" target="_blank" rel="noopener" class="btn-pill btn-primary">
-            <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-            View on GitHub
-          </a>
-          <a href="#install" class="btn-pill btn-ghost">Get Started</a>
+        <p style="margin:0 auto 2rem;font-size:0.82rem;color:var(--accent-teal);font-weight:500;letter-spacing:0.05em;">
+          Fully local. Reads session logs from disk. No API keys, no cloud.
+        </p>
+        <!-- Install commands with tabs -->
+        <div id="install-tabs" style="max-width:28rem;margin:0 auto 2rem;">
+          <div style="display:flex;gap:0;margin-bottom:-1px;position:relative;z-index:1;">
+            <button class="pkg-tab active" data-pkg="npx" onclick="switchTab('npx')" style="flex:1;">npx</button>
+            <button class="pkg-tab" data-pkg="bunx" onclick="switchTab('bunx')" style="flex:1;">bunx</button>
+            <button class="pkg-tab" data-pkg="pnpm" onclick="switchTab('pnpm')" style="flex:1;">pnpm</button>
+          </div>
+          <div class="glass-card" style="padding:0.75rem 1.25rem;border-radius:0 0 0.8rem 0.8rem;border-top:none;display:flex;align-items:center;justify-content:space-between;">
+            <div class="code-block" style="font-size:0.88rem;">
+              <span class="code-prompt">$ </span><span class="code-cmd" id="install-cmd">npx ai-wrapped@latest</span>
+            </div>
+            <button id="copy-btn" onclick="copyCmd()" style="background:none;border:none;cursor:pointer;color:var(--text-muted);padding:0.25rem;transition:color 0.2s;" onmouseover="this.style.color='var(--text-primary)'" onmouseout="this.style.color='var(--text-muted)'">
+              <svg class="copy-icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              <svg class="check-icon" width="16" height="16" fill="none" stroke="var(--accent-teal)" stroke-width="2.5" viewBox="0 0 24 24" style="display:none;"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+            </button>
+          </div>
         </div>
+
+        <a href="https://github.com/gulivan/ai-wrapped" target="_blank" rel="noopener" class="btn-pill btn-ghost" style="margin:0 auto;">
+          <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          View on GitHub
+        </a>
       </div>
 
       <!-- Wrapped preview card -->
@@ -518,45 +561,6 @@
     </div>
   </section>
 
-  <!-- Install -->
-  <section id="install">
-    <div class="container reveal">
-      <div style="text-align:center;margin-bottom:3rem;">
-        <p class="kicker" style="margin-bottom:0.5rem;">Get Started</p>
-        <h2 class="section-title">Clone, install, run</h2>
-      </div>
-
-      <div style="max-width:36rem;margin:0 auto;display:flex;flex-direction:column;gap:1rem;">
-        <div class="glass-card" style="padding:1.75rem;border-radius:1.2rem;">
-          <div class="code-block">
-            <div><span class="code-prompt">$ </span><span class="code-cmd">git clone https://github.com/gulivan/ai-wrapped.git</span></div>
-            <div><span class="code-prompt">$ </span><span class="code-cmd">cd ai-wrapped</span></div>
-            <div><span class="code-prompt">$ </span><span class="code-cmd">bun install</span></div>
-            <div><span class="code-prompt">$ </span><span class="code-cmd">bun run dev</span></div>
-          </div>
-        </div>
-
-        <div class="glass-tile" style="padding:1.25rem 1.5rem;">
-          <div class="stat-label" style="margin-bottom:0.75rem;">Requirements</div>
-          <div style="display:flex;flex-direction:column;gap:0.5rem;font-size:0.88rem;">
-            <div style="display:flex;align-items:center;gap:0.5rem;">
-              <svg width="14" height="14" fill="none" stroke="var(--accent-teal)" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
-              <span>macOS (native webview via <a href="https://electrobun.dev" target="_blank" rel="noopener" style="color:var(--accent-cyan);text-decoration:none;border-bottom:1px solid rgba(34,211,238,0.3);">Electrobun</a>)</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:0.5rem;">
-              <svg width="14" height="14" fill="none" stroke="var(--accent-teal)" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
-              <span><a href="https://bun.sh" target="_blank" rel="noopener" style="color:var(--accent-cyan);text-decoration:none;border-bottom:1px solid rgba(34,211,238,0.3);">Bun</a> runtime</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:0.5rem;">
-              <svg width="14" height="14" fill="none" stroke="var(--accent-teal)" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
-              <span>At least one AI coding agent with local session logs</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
   <!-- Footer -->
   <footer>
     <div class="container" style="padding-top:2rem;padding-bottom:2rem;display:flex;align-items:center;justify-content:space-between;font-size:0.82rem;color:var(--text-muted);">
@@ -568,13 +572,28 @@
     </div>
   </footer>
 
-  <!-- Scroll reveal -->
   <script>
+    // Scroll reveal
     const reveals = document.querySelectorAll('.reveal');
     const observer = new IntersectionObserver((entries) => {
       entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); } });
     }, { threshold: 0.15 });
     reveals.forEach(el => observer.observe(el));
+
+    // Package manager tabs
+    const cmds = { npx: 'npx ai-wrapped@latest', bunx: 'bunx ai-wrapped@latest', pnpm: 'pnpm dlx ai-wrapped@latest' };
+    function switchTab(pkg) {
+      document.querySelectorAll('.pkg-tab').forEach(t => t.classList.toggle('active', t.dataset.pkg === pkg));
+      document.getElementById('install-cmd').textContent = cmds[pkg];
+    }
+    function copyCmd() {
+      const cmd = document.getElementById('install-cmd').textContent;
+      navigator.clipboard.writeText(cmd);
+      const btn = document.getElementById('copy-btn');
+      btn.querySelector('.copy-icon').style.display = 'none';
+      btn.querySelector('.check-icon').style.display = 'block';
+      setTimeout(() => { btn.querySelector('.copy-icon').style.display = 'block'; btn.querySelector('.check-icon').style.display = 'none'; }, 1500);
+    }
   </script>
 
 </body>
