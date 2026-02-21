@@ -2,13 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import { SESSION_SOURCES, type SessionSource } from "@shared/schema";
 import DashboardCharts from "./DashboardCharts";
 import EmptyState from "./EmptyState";
-import Sidebar from "./Sidebar";
+import Sidebar, { type ShareMenuAction } from "./Sidebar";
 import StatsCards, { AnimatedNumber } from "./StatsCards";
 import { useRPC } from "../hooks/useRPC";
 import { useDashboardData, type DashboardDateRange } from "../hooks/useDashboardData";
 import { SOURCE_LABELS } from "../lib/constants";
 import { formatDate, formatDuration, formatNumber } from "../lib/formatters";
-import { encodeShareData, type SharePayload } from "@shared/shareData";
+import {
+  encodeShareData,
+  encodeShareSummaryData,
+  toShareSummaryPayload,
+  type SharePayload,
+} from "@shared/shareData";
+import { downloadShareSummaryImage } from "../lib/shareImage";
 
 const clampPercentage = (value: number): number => Math.max(0, Math.min(100, value));
 const CARD_ANIMATION_MS = 2000;
@@ -52,7 +58,7 @@ const Dashboard = () => {
   const [costGroupBy, setCostGroupBy] = useState<CostGroupBy>("none");
   const [activeCardIndex, setActiveCardIndex] = useState<number>(1);
   const [animatingCardIndices, setAnimatingCardIndices] = useState<Record<number, boolean>>({});
-  const [isSharingCard, setIsSharingCard] = useState<boolean>(false);
+  const [shareBusyAction, setShareBusyAction] = useState<ShareMenuAction | null>(null);
   const activeCardRef = useRef<number>(1);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const animatedCardIndicesRef = useRef<Set<number>>(new Set());
@@ -117,60 +123,124 @@ const Dashboard = () => {
     }
   };
 
-  const handleShareCard = async () => {
-    if (isSharingCard) return;
-    if (!summary) return;
+  const buildSharePayload = useCallback((): SharePayload | null => {
+    if (!summary) return null;
 
-    setIsSharingCard(true);
-    try {
-      const payload: SharePayload = {
-        v: 1,
-        range: selectedRange,
-        dateFrom,
-        dateTo,
-        totalSessions: totals.totalSessions,
-        totalCostUsd: totals.totalCostUsd,
-        totalTokens: totals.totalTokens,
-        totalToolCalls: summary.totals.toolCalls,
-        totalDurationMs: totals.totalDurationMs,
-        averageSessionDurationMs: totals.averageSessionDurationMs,
-        longestSessionEstimateMs: totals.longestSessionEstimateMs,
-        currentStreakDays: totals.currentStreakDays,
-        currentStreakStartDate: totals.currentStreakStartDate,
-        activeDays: totals.activeDays,
-        dateSpanDays: totals.dateSpanDays,
-        modelBreakdown,
-        agentBreakdown,
-        timeline,
-        dailyAgentTokensByDate,
-        dailyAgentCostsByDate,
-        dailyModelCostsByDate,
-        dailyAverageCostUsd: totals.dailyAverageCostUsd,
-        mostExpensiveDay: totals.mostExpensiveDay,
-        topRepos,
-        hourlyBreakdown,
-        weekendSessionPercent,
-        busiestDayOfWeek,
-        busiestSingleDay,
-      };
+    return {
+      v: 1,
+      range: selectedRange,
+      dateFrom,
+      dateTo,
+      totalSessions: totals.totalSessions,
+      totalCostUsd: totals.totalCostUsd,
+      totalTokens: totals.totalTokens,
+      totalToolCalls: summary.totals.toolCalls,
+      totalDurationMs: totals.totalDurationMs,
+      averageSessionDurationMs: totals.averageSessionDurationMs,
+      longestSessionEstimateMs: totals.longestSessionEstimateMs,
+      currentStreakDays: totals.currentStreakDays,
+      currentStreakStartDate: totals.currentStreakStartDate,
+      activeDays: totals.activeDays,
+      dateSpanDays: totals.dateSpanDays,
+      modelBreakdown,
+      agentBreakdown,
+      timeline,
+      dailyAgentTokensByDate,
+      dailyAgentCostsByDate,
+      dailyModelCostsByDate,
+      dailyAverageCostUsd: totals.dailyAverageCostUsd,
+      mostExpensiveDay: totals.mostExpensiveDay,
+      topRepos,
+      hourlyBreakdown,
+      weekendSessionPercent,
+      busiestDayOfWeek,
+      busiestSingleDay,
+    };
+  }, [
+    agentBreakdown,
+    busiestDayOfWeek,
+    busiestSingleDay,
+    dailyAgentCostsByDate,
+    dailyAgentTokensByDate,
+    dailyModelCostsByDate,
+    dateFrom,
+    dateTo,
+    hourlyBreakdown,
+    modelBreakdown,
+    selectedRange,
+    summary,
+    timeline,
+    topRepos,
+    totals.activeDays,
+    totals.averageSessionDurationMs,
+    totals.currentStreakDays,
+    totals.currentStreakStartDate,
+    totals.dailyAverageCostUsd,
+    totals.dateSpanDays,
+    totals.longestSessionEstimateMs,
+    totals.mostExpensiveDay,
+    totals.totalCostUsd,
+    totals.totalDurationMs,
+    totals.totalSessions,
+    totals.totalTokens,
+    weekendSessionPercent,
+  ]);
 
-      const encoded = encodeShareData(payload);
-      if (!encoded || encoded.length > MAX_SHARE_HASH_LENGTH) {
-        throw new Error(`Encoded share payload exceeds safe URL length (${encoded.length} chars)`);
-      }
-
-      rpc.send.openExternal({
-        url: `https://ai-wrapped.com/share#${encoded}`,
-      });
-    } catch (caught) {
-      const message =
-        caught instanceof Error ? caught.message : "Failed to share dashboard by URL";
-      console.error("Failed to share dashboard by URL", caught);
-      window.alert(message);
-    } finally {
-      setIsSharingCard(false);
+  const buildFullShareUrl = useCallback((payload: SharePayload): string => {
+    const encoded = encodeShareData(payload);
+    if (!encoded || encoded.length > MAX_SHARE_HASH_LENGTH) {
+      throw new Error(`Encoded share payload exceeds safe URL length (${encoded.length} chars)`);
     }
-  };
+    return `https://ai-wrapped.com/share#${encoded}`;
+  }, []);
+
+  const handleShareAction = useCallback(
+    async (action: ShareMenuAction) => {
+      if (shareBusyAction) return;
+
+      const payload = buildSharePayload();
+      if (!payload) return;
+
+      setShareBusyAction(action);
+      try {
+        if (action === "download-image") {
+          await downloadShareSummaryImage(toShareSummaryPayload(payload));
+          return;
+        }
+
+        if (action === "open-summary-share") {
+          const summaryEncoded = encodeShareSummaryData(toShareSummaryPayload(payload));
+          if (!summaryEncoded || summaryEncoded.length > MAX_SHARE_HASH_LENGTH) {
+            throw new Error(`Encoded summary payload exceeds safe URL length (${summaryEncoded.length} chars)`);
+          }
+
+          rpc.send.openExternal({
+            url: `https://ai-wrapped.com/share?share_summary=${encodeURIComponent(summaryEncoded)}`,
+          });
+          return;
+        }
+
+        if (action === "open-full-share-no-repos") {
+          rpc.send.openExternal({
+            url: buildFullShareUrl({ ...payload, topRepos: [] }),
+          });
+          return;
+        }
+
+        rpc.send.openExternal({
+          url: buildFullShareUrl(payload),
+        });
+      } catch (caught) {
+        const message =
+          caught instanceof Error ? caught.message : "Failed to generate share output";
+        console.error("Failed to process share action", { action, caught });
+        window.alert(message);
+      } finally {
+        setShareBusyAction(null);
+      }
+    },
+    [buildFullShareUrl, buildSharePayload, rpc, shareBusyAction],
+  );
 
   useEffect(() => {
     prefersReducedMotionRef.current = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -256,8 +326,8 @@ const Dashboard = () => {
       onCostGroupByChange={handleCostGroupByChange}
       costGroupOptions={costGroupOptions}
       costAgentDisabled={costGroupBy === "by-model"}
-      onShareCard={handleShareCard}
-      shareBusy={isSharingCard}
+      onShareAction={handleShareAction}
+      shareBusyAction={shareBusyAction}
       isScanning={isScanning}
     />
   );

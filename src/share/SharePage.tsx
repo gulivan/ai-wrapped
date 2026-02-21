@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import type { SharePayload } from "@shared/shareData";
-import { decodeShareData } from "@shared/shareData";
+import type { SharePayload, ShareSummaryPayload } from "@shared/shareData";
+import { decodeShareData, decodeShareSummaryData } from "@shared/shareData";
 import DashboardCharts from "../mainview/components/DashboardCharts";
 import StatsCards, { AnimatedNumber } from "../mainview/components/StatsCards";
 import { formatDate, formatDuration, formatNumber } from "../mainview/lib/formatters";
+import SummaryShareCard from "./SummaryShareCard";
 
 const clampPercentage = (value: number): number => Math.max(0, Math.min(100, value));
 const CARD_ANIMATION_MS = 2000;
@@ -19,7 +20,24 @@ const alwaysAnimatedCards: Record<number, boolean> = {
   8: true,
 };
 
-const readPayload = (): SharePayload | null => decodeShareData(window.location.hash);
+type ShareViewData =
+  | { kind: "full"; payload: SharePayload }
+  | { kind: "summary"; payload: ShareSummaryPayload };
+
+const readPayload = (): ShareViewData | null => {
+  const fullPayload = decodeShareData(window.location.hash);
+  if (fullPayload) {
+    return { kind: "full", payload: fullPayload };
+  }
+
+  const summaryEncoded = new URLSearchParams(window.location.search).get("share_summary");
+  if (!summaryEncoded) return null;
+
+  const summaryPayload = decodeShareSummaryData(summaryEncoded);
+  if (!summaryPayload) return null;
+
+  return { kind: "summary", payload: summaryPayload };
+};
 
 const heroCopyFromRange = (selectedRange: string): { kicker: string; title: string } => {
   if (selectedRange === "last7") {
@@ -53,22 +71,27 @@ const heroCopyFromRange = (selectedRange: string): { kicker: string; title: stri
 };
 
 const SharePage = () => {
-  const [payload, setPayload] = useState<SharePayload | null>(() => readPayload());
+  const [sharedData, setSharedData] = useState<ShareViewData | null>(() => readPayload());
 
   useEffect(() => {
-    const handleHashChange = () => {
-      setPayload(readPayload());
+    const handleLocationChange = () => {
+      setSharedData(readPayload());
     };
-    window.addEventListener("hashchange", handleHashChange);
-    return () => window.removeEventListener("hashchange", handleHashChange);
+
+    window.addEventListener("hashchange", handleLocationChange);
+    window.addEventListener("popstate", handleLocationChange);
+    return () => {
+      window.removeEventListener("hashchange", handleLocationChange);
+      window.removeEventListener("popstate", handleLocationChange);
+    };
   }, []);
 
   const heroCopy = useMemo(
-    () => heroCopyFromRange(payload?.range ?? ""),
-    [payload?.range],
+    () => heroCopyFromRange(sharedData?.kind === "full" ? sharedData.payload.range : ""),
+    [sharedData],
   );
 
-  if (!payload) {
+  if (!sharedData) {
     return (
       <main className="share-empty">
         <article className="share-empty-card">
@@ -88,6 +111,11 @@ const SharePage = () => {
     );
   }
 
+  if (sharedData.kind === "summary") {
+    return <SummaryShareCard payload={sharedData.payload} />;
+  }
+
+  const payload = sharedData.payload;
   const activeDayCoverage =
     payload.dateSpanDays > 0 ? clampPercentage((payload.activeDays / payload.dateSpanDays) * 100) : 0;
   const totalHours = payload.totalDurationMs / (60 * 60 * 1000);

@@ -186,11 +186,228 @@ body {
   color: rgba(226, 232, 240, 0.95);
 }
 
+.summary-share-shell {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1rem;
+  max-width: 78rem;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.summary-share-card {
+  border-radius: 2rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background:
+    linear-gradient(135deg, rgba(38, 21, 91, 0.9), rgba(13, 59, 141, 0.84) 54%, rgba(13, 148, 136, 0.76)),
+    rgba(2, 6, 23, 0.7);
+  padding: 1.5rem;
+}
+
+.summary-share-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.summary-share-kicker {
+  margin: 0;
+  font-size: 0.86rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(186, 230, 253, 0.96);
+}
+
+.summary-share-metrics {
+  margin-top: 1.5rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1.05rem;
+}
+
+.summary-share-metric {
+  border-radius: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(2, 6, 23, 0.33);
+  padding: 0.95rem 1.05rem;
+}
+
+.summary-share-metric-value {
+  margin: 0;
+  font-size: clamp(1.55rem, 2.25vw, 2.35rem);
+  font-weight: 600;
+  color: #fff;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.summary-share-metric-label {
+  margin: 0.25rem 0 0;
+  font-size: 0.66rem;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  color: rgba(203, 213, 225, 0.94);
+}
+
+.summary-share-panels {
+  margin-top: 1rem;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1fr 1fr;
+}
+
+.summary-share-panel {
+  border-radius: 1.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(2, 6, 23, 0.4);
+  padding: 1rem;
+}
+
+.summary-share-panel-title {
+  margin: 0;
+  font-size: 0.8rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(186, 230, 253, 0.95);
+  text-align: center;
+}
+
+.summary-share-empty {
+  margin: 1.5rem 0 0;
+  color: rgba(226, 232, 240, 0.88);
+}
+
+.summary-share-agent-list {
+  list-style: none;
+  margin: 0.8rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.65rem;
+  place-items: center;
+}
+
+.summary-share-agent-row {
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, auto) auto;
+  align-items: center;
+  column-gap: 0.6rem;
+  max-width: 100%;
+}
+
+.summary-share-agent-name {
+  color: rgba(248, 250, 252, 0.96);
+  font-size: 1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 12.8rem;
+}
+
+.summary-share-agent-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 9999px;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(241, 248, 255, 0.45);
+}
+
+.summary-share-agent-percent {
+  color: rgba(191, 219, 254, 0.92);
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  min-width: 2.2rem;
+}
+
+.summary-share-panel-ring {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: left;
+}
+
+.summary-share-streak-row {
+  display: flex;
+  width: 100%;
+  max-width: 20rem;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.summary-share-streak-copy {
+  min-width: 0;
+}
+
+.summary-share-streak-value {
+  margin: 0;
+  font-size: clamp(3rem, 6vw, 5rem);
+  line-height: 1;
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.summary-share-streak-label {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(186, 230, 253, 0.9);
+  white-space: nowrap;
+}
+
+.summary-share-streak-label + .summary-share-streak-label {
+  margin-top: 0.25rem;
+}
+
+.summary-share-streak-days {
+  margin: 0.3rem 0 0;
+  font-size: 0.82rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(186, 230, 253, 0.82);
+  white-space: nowrap;
+}
+
+.summary-share-footer {
+  margin-top: 0;
+}
+
 @media (max-width: 768px) {
   .wrapped-card {
     min-height: calc(100vh - 1.5rem);
     border-radius: 1.5rem;
     padding: 1.1rem;
+  }
+
+  .summary-share-shell {
+    padding: 1rem;
+  }
+
+  .summary-share-card {
+    border-radius: 1.4rem;
+    padding: 1rem;
+  }
+
+  .summary-share-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .summary-share-panels {
+    grid-template-columns: 1fr;
+  }
+
+  .summary-share-streak-row {
+    justify-content: flex-start;
   }
 }
 

@@ -73,6 +73,17 @@ const extractCodexText = (record: Record<string, unknown>, payload: Record<strin
   return extractText(record.content ?? record.text ?? record.message ?? record);
 };
 
+const getNested = (value: unknown, path: string[]): unknown => {
+  let current: unknown = value;
+  for (const part of path) {
+    if (!current || typeof current !== "object" || !(part in (current as Record<string, unknown>))) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+};
+
 interface CodexUsageTotals {
   inputTokens: number;
   cacheReadTokens: number;
@@ -86,6 +97,36 @@ const toFiniteNumber = (value: unknown): number | null => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
   }
+  return null;
+};
+
+const extractCostUsd = (record: Record<string, unknown>, payload: Record<string, unknown> | null): number | null => {
+  const candidates: unknown[] = [
+    record.costUSD,
+    record.costUsd,
+    record.cost_usd,
+    record.total_cost_usd,
+    payload?.costUSD,
+    payload?.costUsd,
+    payload?.cost_usd,
+    payload?.total_cost_usd,
+    payload?.cost,
+    getNested(payload, ["cost", "total_cost_usd"]),
+    getNested(payload, ["cost", "usd"]),
+    getNested(payload, ["info", "costUSD"]),
+    getNested(payload, ["info", "costUsd"]),
+    getNested(payload, ["info", "cost_usd"]),
+    getNested(payload, ["info", "total_cost_usd"]),
+    getNested(payload, ["info", "last_cost_usd"]),
+    getNested(payload, ["info", "last_cost", "usd"]),
+    getNested(payload, ["info", "total_cost", "usd"]),
+  ];
+
+  for (const candidate of candidates) {
+    const parsed = toFiniteNumber(candidate);
+    if (parsed !== null) return parsed;
+  }
+
   return null;
 };
 
@@ -144,30 +185,92 @@ const toTokenUsage = (usage: CodexUsageTotals): SessionEvent["tokens"] => {
 const extractTokenCountUsage = (
   payload: Record<string, unknown> | null,
   previousTotals: CodexUsageTotals | null,
-): { tokens: SessionEvent["tokens"]; nextTotals: CodexUsageTotals | null } => {
+  previousTotalCostUsd: number | null,
+): {
+  tokens: SessionEvent["tokens"];
+  costUsd: number | null;
+  nextTotals: CodexUsageTotals | null;
+  nextTotalCostUsd: number | null;
+} => {
   const info = asRecord(payload?.info);
   const totalUsage = toCodexUsageTotals(info?.total_token_usage);
   const lastUsage = toCodexUsageTotals(info?.last_token_usage);
+  const totalCostUsd = toFiniteNumber(
+    info?.total_cost_usd ??
+      info?.totalCostUsd ??
+      info?.totalCostUSD ??
+      getNested(info, ["total_cost", "usd"]) ??
+      payload?.total_cost_usd ??
+      payload?.totalCostUsd ??
+      payload?.totalCostUSD ??
+      getNested(payload, ["total_cost", "usd"]),
+  );
+  const lastCostUsd = toFiniteNumber(
+    info?.last_cost_usd ??
+      info?.lastCostUsd ??
+      info?.lastCostUSD ??
+      getNested(info, ["last_cost", "usd"]) ??
+      payload?.last_cost_usd ??
+      payload?.lastCostUsd ??
+      payload?.lastCostUSD ??
+      payload?.cost_usd ??
+      payload?.costUsd ??
+      payload?.costUSD ??
+      getNested(payload, ["last_cost", "usd"]) ??
+      getNested(payload, ["cost", "usd"]) ??
+      payload?.cost,
+  );
+
+  const resolveCostFromTokenCount = (): { costUsd: number | null; nextTotalCostUsd: number | null } => {
+    if (totalCostUsd !== null) {
+      if (previousTotalCostUsd !== null) {
+        return {
+          costUsd: Math.max(0, totalCostUsd - previousTotalCostUsd),
+          nextTotalCostUsd: totalCostUsd,
+        };
+      }
+
+      return {
+        costUsd: Math.max(0, totalCostUsd),
+        nextTotalCostUsd: totalCostUsd,
+      };
+    }
+
+    if (lastCostUsd !== null) {
+      return {
+        costUsd: Math.max(0, lastCostUsd),
+        nextTotalCostUsd: previousTotalCostUsd,
+      };
+    }
+
+    return {
+      costUsd: null,
+      nextTotalCostUsd: previousTotalCostUsd,
+    };
+  };
 
   if (totalUsage) {
     const deltaUsage = subtractUsageTotals(totalUsage, previousTotals);
     const deltaTokens = toTokenUsage(deltaUsage);
+    const { costUsd, nextTotalCostUsd } = resolveCostFromTokenCount();
     if (deltaTokens) {
-      return { tokens: deltaTokens, nextTotals: totalUsage };
+      return { tokens: deltaTokens, costUsd, nextTotals: totalUsage, nextTotalCostUsd };
     }
 
     if (!previousTotals && lastUsage) {
-      return { tokens: toTokenUsage(lastUsage), nextTotals: totalUsage };
+      return { tokens: toTokenUsage(lastUsage), costUsd, nextTotals: totalUsage, nextTotalCostUsd };
     }
 
-    return { tokens: null, nextTotals: totalUsage };
+    return { tokens: null, costUsd, nextTotals: totalUsage, nextTotalCostUsd };
   }
 
   if (lastUsage) {
-    return { tokens: toTokenUsage(lastUsage), nextTotals: previousTotals };
+    const { costUsd, nextTotalCostUsd } = resolveCostFromTokenCount();
+    return { tokens: toTokenUsage(lastUsage), costUsd, nextTotals: previousTotals, nextTotalCostUsd };
   }
 
-  return { tokens: null, nextTotals: previousTotals };
+  const { costUsd, nextTotalCostUsd } = resolveCostFromTokenCount();
+  return { tokens: null, costUsd, nextTotals: previousTotals, nextTotalCostUsd };
 };
 
 const createEvent = (
@@ -187,6 +290,7 @@ const createEvent = (
     isDelta?: boolean;
     kindType?: string | null;
     tokens?: SessionEvent["tokens"];
+    costUsd?: number | null;
   } = {},
 ): SessionEvent => {
   const payload = asRecord(record.payload);
@@ -195,6 +299,8 @@ const createEvent = (
   const messageId = options.messageId ?? getString(payload?.id) ?? getString(payload?.call_id);
   const eventScope = kindType ?? kind;
   const idSuffix = messageId ? `${eventScope}:${messageId}` : `${eventScope}:${lineIndex}`;
+  const hasExplicitCost = Object.prototype.hasOwnProperty.call(options, "costUsd");
+  const explicitCost = options.costUsd;
 
   return {
     // Keep IDs unique across event kinds and repeated delta frames.
@@ -212,7 +318,11 @@ const createEvent = (
     messageId,
     isDelta: Boolean(options.isDelta),
     tokens: options.tokens ?? null,
-    costUsd: null,
+    costUsd: hasExplicitCost
+      ? typeof explicitCost === "number" && Number.isFinite(explicitCost)
+        ? explicitCost
+        : null
+      : extractCostUsd(record, payload),
   };
 };
 
@@ -232,6 +342,7 @@ export const codexParser: SessionParser = {
       let cliVersion: string | null = null;
       let title: string | null = null;
       let previousCodexTotalUsage: CodexUsageTotals | null = null;
+      let previousCodexTotalCostUsd: number | null = null;
 
       const events: SessionEvent[] = [];
 
@@ -346,8 +457,13 @@ export const codexParser: SessionParser = {
           const messageType = payloadType;
 
           if (messageType === "token_count") {
-            const { tokens, nextTotals } = extractTokenCountUsage(payload, previousCodexTotalUsage);
+            const { tokens, costUsd, nextTotals, nextTotalCostUsd } = extractTokenCountUsage(
+              payload,
+              previousCodexTotalUsage,
+              previousCodexTotalCostUsd,
+            );
             previousCodexTotalUsage = nextTotals;
+            previousCodexTotalCostUsd = nextTotalCostUsd;
 
             events.push(
               createEvent(sessionId, lineIndex, record, "meta", {
@@ -356,6 +472,7 @@ export const codexParser: SessionParser = {
                 model,
                 kindType: messageType,
                 tokens,
+                costUsd,
               }),
             );
             continue;

@@ -16,6 +16,7 @@ import {
   writeDailyStore,
   writeScanState,
 } from "./store";
+import { prefetchPricing } from "./pricing";
 
 export interface ScanOptions {
   fullScan?: boolean;
@@ -30,6 +31,7 @@ export interface ScanResult {
 }
 
 export const runScan = async (options: ScanOptions = {}): Promise<ScanResult> => {
+  await prefetchPricing();
   const aggregationTimeZone = resolveAggregationTimeZone(options.timeZone);
   const shouldFullScan =
     Boolean(options.fullScan) || (await dailyStoreNeedsTimeZoneBackfill(aggregationTimeZone));

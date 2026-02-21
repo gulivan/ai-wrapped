@@ -177,4 +177,174 @@ describe("codexParser", () => {
       rmSync(fixtureDir, { recursive: true, force: true });
     }
   });
+
+  test("uses token_count cumulative total_cost_usd as deltas", async () => {
+    const fixtureDir = mkdtempSync(join(tmpdir(), "ai-stats-codex-"));
+
+    try {
+      const filePath = join(fixtureDir, "rollout-2026-02-03T11-38-55-token-cost.jsonl");
+      const content = [
+        JSON.stringify({
+          type: "session_meta",
+          timestamp: "2026-02-03T11:38:55Z",
+          payload: {
+            id: "session-token-cost",
+            cwd: "/tmp/project",
+            model_provider: "gpt-5.3-codex",
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-02-03T11:39:00Z",
+          payload: {
+            type: "token_count",
+            info: {
+              total_cost_usd: 0.015,
+              total_token_usage: {
+                input_tokens: 100,
+                cached_input_tokens: 50,
+                output_tokens: 20,
+                reasoning_output_tokens: 10,
+              },
+            },
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-02-03T11:39:01Z",
+          payload: {
+            type: "token_count",
+            info: {
+              total_cost_usd: 0.015,
+              total_token_usage: {
+                input_tokens: 100,
+                cached_input_tokens: 50,
+                output_tokens: 20,
+                reasoning_output_tokens: 10,
+              },
+            },
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-02-03T11:39:02Z",
+          payload: {
+            type: "token_count",
+            info: {
+              total_cost_usd: 0.021,
+              total_token_usage: {
+                input_tokens: 170,
+                cached_input_tokens: 80,
+                output_tokens: 35,
+                reasoning_output_tokens: 15,
+              },
+            },
+          },
+        }),
+      ].join("\n");
+
+      writeFileSync(filePath, content, "utf8");
+      const fileStat = statSync(filePath);
+
+      const parsed = await codexParser.parse({
+        path: filePath,
+        source: "codex",
+        mtime: fileStat.mtimeMs,
+        size: fileStat.size,
+      });
+
+      expect(parsed).not.toBeNull();
+      if (!parsed) return;
+
+      const normalized = normalizeSession(parsed);
+      expect(normalized.session.totalCostUsd ?? 0).toBeCloseTo(0.021, 10);
+    } finally {
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses top-level token_count total_cost_usd as deltas", async () => {
+    const fixtureDir = mkdtempSync(join(tmpdir(), "ai-stats-codex-"));
+
+    try {
+      const filePath = join(fixtureDir, "rollout-2026-02-03T11-38-55-token-cost-top-level.jsonl");
+      const content = [
+        JSON.stringify({
+          type: "session_meta",
+          timestamp: "2026-02-03T11:38:55Z",
+          payload: {
+            id: "session-token-cost-top-level",
+            cwd: "/tmp/project",
+            model_provider: "gpt-5.3-codex",
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-02-03T11:39:00Z",
+          payload: {
+            type: "token_count",
+            total_cost_usd: 0.015,
+            info: {
+              total_token_usage: {
+                input_tokens: 100,
+                cached_input_tokens: 50,
+                output_tokens: 20,
+                reasoning_output_tokens: 10,
+              },
+            },
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-02-03T11:39:01Z",
+          payload: {
+            type: "token_count",
+            total_cost_usd: 0.015,
+            info: {
+              total_token_usage: {
+                input_tokens: 100,
+                cached_input_tokens: 50,
+                output_tokens: 20,
+                reasoning_output_tokens: 10,
+              },
+            },
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-02-03T11:39:02Z",
+          payload: {
+            type: "token_count",
+            total_cost_usd: 0.021,
+            info: {
+              total_token_usage: {
+                input_tokens: 170,
+                cached_input_tokens: 80,
+                output_tokens: 35,
+                reasoning_output_tokens: 15,
+              },
+            },
+          },
+        }),
+      ].join("\n");
+
+      writeFileSync(filePath, content, "utf8");
+      const fileStat = statSync(filePath);
+
+      const parsed = await codexParser.parse({
+        path: filePath,
+        source: "codex",
+        mtime: fileStat.mtimeMs,
+        size: fileStat.size,
+      });
+
+      expect(parsed).not.toBeNull();
+      if (!parsed) return;
+
+      const normalized = normalizeSession(parsed);
+      expect(normalized.session.totalCostUsd ?? 0).toBeCloseTo(0.021, 10);
+    } finally {
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
 });

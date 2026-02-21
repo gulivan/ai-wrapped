@@ -665,7 +665,10 @@ const DashboardCharts = ({
                       background: "rgba(2,6,23,0.95)",
                       border: "1px solid rgba(148,163,184,0.35)",
                       borderRadius: "12px",
+                      color: "#ffffff",
                     }}
+                    labelStyle={{ color: "#ffffff" }}
+                    itemStyle={{ color: "#ffffff" }}
                     formatter={formatTokensTooltipWithValue}
                   />
                   <Bar

@@ -110,6 +110,55 @@ const getNested = (value: unknown, path: string[]): unknown => {
   return current;
 };
 
+const toFiniteNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+};
+
+const extractCostUsd = (
+  record: Record<string, unknown>,
+  payload: Record<string, unknown> | null,
+  message: Record<string, unknown> | null,
+): number | null => {
+  const candidates: unknown[] = [
+    record.costUSD,
+    record.costUsd,
+    record.cost_usd,
+    record.total_cost_usd,
+    payload?.costUSD,
+    payload?.costUsd,
+    payload?.cost_usd,
+    payload?.total_cost_usd,
+    message?.costUSD,
+    message?.costUsd,
+    message?.cost_usd,
+    getNested(record, ["cost", "total_cost_usd"]),
+    getNested(record, ["cost", "usd"]),
+    getNested(payload, ["cost", "total_cost_usd"]),
+    getNested(payload, ["cost", "usd"]),
+    getNested(payload, ["info", "costUSD"]),
+    getNested(payload, ["info", "costUsd"]),
+    getNested(payload, ["info", "cost_usd"]),
+    getNested(payload, ["info", "total_cost_usd"]),
+    getNested(payload, ["info", "last_cost_usd"]),
+  ];
+
+  for (const candidate of candidates) {
+    const parsed = toFiniteNumber(candidate);
+    if (parsed !== null) return parsed;
+  }
+
+  return null;
+};
+
 const tokenUsageTotal = (tokens: TokenUsage): number =>
   tokens.inputTokens +
   tokens.outputTokens +
@@ -147,30 +196,111 @@ const isTokenCountType = (rawType: string | null): boolean => {
 const extractTokenCountUsage = (
   payload: Record<string, unknown> | null,
   previousTotals: TokenUsage | null,
-): { shouldOverride: boolean; tokens: SessionEvent["tokens"]; nextTotals: TokenUsage | null } => {
+  previousTotalCostUsd: number | null,
+): {
+  shouldOverrideTokens: boolean;
+  tokens: SessionEvent["tokens"];
+  nextTotals: TokenUsage | null;
+  costUsd: number | null;
+  nextTotalCostUsd: number | null;
+} => {
   const info = asRecord(payload?.info);
   const totalUsage = normalizeTokenUsage(info?.total_token_usage);
   const lastUsage = normalizeTokenUsage(info?.last_token_usage);
+  const totalCostUsd = toFiniteNumber(
+    info?.total_cost_usd ??
+      info?.totalCostUsd ??
+      info?.totalCostUSD ??
+      getNested(info, ["total_cost", "usd"]) ??
+      payload?.total_cost_usd ??
+      payload?.totalCostUsd ??
+      payload?.totalCostUSD ??
+      getNested(payload, ["total_cost", "usd"]),
+  );
+  const lastCostUsd = toFiniteNumber(
+    info?.last_cost_usd ??
+      info?.lastCostUsd ??
+      info?.lastCostUSD ??
+      getNested(info, ["last_cost", "usd"]) ??
+      payload?.last_cost_usd ??
+      payload?.lastCostUsd ??
+      payload?.lastCostUSD ??
+      payload?.cost_usd ??
+      payload?.costUsd ??
+      payload?.costUSD ??
+      getNested(payload, ["last_cost", "usd"]) ??
+      getNested(payload, ["cost", "usd"]) ??
+      payload?.cost,
+  );
+
+  const resolveCostFromTokenCount = (): { costUsd: number | null; nextTotalCostUsd: number | null } => {
+    if (totalCostUsd !== null) {
+      if (previousTotalCostUsd !== null) {
+        return {
+          costUsd: Math.max(0, totalCostUsd - previousTotalCostUsd),
+          nextTotalCostUsd: totalCostUsd,
+        };
+      }
+
+      return {
+        costUsd: Math.max(0, totalCostUsd),
+        nextTotalCostUsd: totalCostUsd,
+      };
+    }
+
+    if (lastCostUsd !== null) {
+      return {
+        costUsd: Math.max(0, lastCostUsd),
+        nextTotalCostUsd: previousTotalCostUsd,
+      };
+    }
+
+    return {
+      costUsd: null,
+      nextTotalCostUsd: previousTotalCostUsd,
+    };
+  };
 
   if (totalUsage) {
     const deltaUsage = subtractTokenUsage(totalUsage, previousTotals);
     const deltaTokens = toTokenCountEventUsage(deltaUsage);
+    const { costUsd, nextTotalCostUsd } = resolveCostFromTokenCount();
     if (deltaTokens) {
-      return { shouldOverride: true, tokens: deltaTokens, nextTotals: totalUsage };
+      return { shouldOverrideTokens: true, tokens: deltaTokens, costUsd, nextTotals: totalUsage, nextTotalCostUsd };
     }
 
     if (!previousTotals && lastUsage) {
-      return { shouldOverride: true, tokens: toTokenCountEventUsage(lastUsage), nextTotals: totalUsage };
+      return {
+        shouldOverrideTokens: true,
+        tokens: toTokenCountEventUsage(lastUsage),
+        costUsd,
+        nextTotals: totalUsage,
+        nextTotalCostUsd,
+      };
     }
 
-    return { shouldOverride: true, tokens: null, nextTotals: totalUsage };
+    return { shouldOverrideTokens: true, tokens: null, costUsd, nextTotals: totalUsage, nextTotalCostUsd };
   }
 
   if (lastUsage) {
-    return { shouldOverride: true, tokens: toTokenCountEventUsage(lastUsage), nextTotals: previousTotals };
+    const { costUsd, nextTotalCostUsd } = resolveCostFromTokenCount();
+    return {
+      shouldOverrideTokens: true,
+      tokens: toTokenCountEventUsage(lastUsage),
+      costUsd,
+      nextTotals: previousTotals,
+      nextTotalCostUsd,
+    };
   }
 
-  return { shouldOverride: false, tokens: null, nextTotals: previousTotals };
+  const { costUsd, nextTotalCostUsd } = resolveCostFromTokenCount();
+  return {
+    shouldOverrideTokens: false,
+    tokens: null,
+    costUsd,
+    nextTotals: previousTotals,
+    nextTotalCostUsd,
+  };
 };
 
 const isDeltaEvent = (type: unknown, payload: Record<string, unknown> | null): boolean => {
@@ -199,7 +329,12 @@ const buildEventFromRecord = (
   lineIndex: number,
   modelFallback: string | null,
   previousTokenCountTotals: TokenUsage | null,
-): { event: SessionEvent; nextTokenCountTotals: TokenUsage | null } => {
+  previousTokenCountTotalCostUsd: number | null,
+): {
+  event: SessionEvent;
+  nextTokenCountTotals: TokenUsage | null;
+  nextTokenCountTotalCostUsd: number | null;
+} => {
   const payload = asRecord(record.payload);
   const message = asRecord(record.message);
 
@@ -237,9 +372,16 @@ const buildEventFromRecord = (
 
   const toolInputValue = payload?.arguments ?? payload?.input ?? record.toolInput ?? message?.input;
   const toolOutputValue = payload?.output ?? payload?.result ?? record.toolOutput ?? message?.output;
-  const tokenCountUsage = isTokenCountType(payloadType) || isTokenCountType(rawType)
-    ? extractTokenCountUsage(payload, previousTokenCountTotals)
-    : { shouldOverride: false, tokens: null, nextTotals: previousTokenCountTotals };
+  const isTokenCount = isTokenCountType(payloadType) || isTokenCountType(rawType);
+  const tokenCountUsage = isTokenCount
+    ? extractTokenCountUsage(payload, previousTokenCountTotals, previousTokenCountTotalCostUsd)
+    : {
+        shouldOverrideTokens: false,
+        tokens: null,
+        costUsd: null,
+        nextTotals: previousTokenCountTotals,
+        nextTotalCostUsd: previousTokenCountTotalCostUsd,
+      };
   const tokensPayload =
     payload?.tokens ??
     payload?.usage ??
@@ -252,26 +394,29 @@ const buildEventFromRecord = (
     getNested(record, ["completion", "usage"]) ??
     getNested(record, ["data", "usage"]);
   const fallbackTokens = normalizeTokenUsage(tokensPayload);
-  const tokens = tokenCountUsage.shouldOverride ? tokenCountUsage.tokens : fallbackTokens;
+  const tokens = tokenCountUsage.shouldOverrideTokens ? tokenCountUsage.tokens : fallbackTokens;
+  const fallbackCostUsd = extractCostUsd(record, payload, message);
+  const costUsd = isTokenCount ? tokenCountUsage.costUsd : fallbackCostUsd;
 
   return {
     nextTokenCountTotals: tokenCountUsage.nextTotals,
+    nextTokenCountTotalCostUsd: tokenCountUsage.nextTotalCostUsd,
     event: {
-    id: eventId,
-    sessionId,
-    kind: resolveEventKind(rawType, role),
-    timestamp: normalizeTimestamp(record.timestamp ?? payload?.timestamp ?? message?.timestamp ?? record.time),
-    role,
-    text,
-    toolName: getFirstString(payload?.name, record.toolName, message?.name),
-    toolInput: toolInputValue ? JSON.stringify(toolInputValue) : null,
-    toolOutput: toolOutputValue ? extractText(toolOutputValue) : null,
-    model: getFirstString(record.model, payload?.model, message?.model, modelFallback),
-    parentId: getFirstString(record.parentId, record.parentUuid, payload?.parent_id, message?.parentId),
-    messageId,
-    isDelta: isDeltaEvent(rawType, payload),
-    tokens,
-    costUsd: null,
+      id: eventId,
+      sessionId,
+      kind: resolveEventKind(rawType, role),
+      timestamp: normalizeTimestamp(record.timestamp ?? payload?.timestamp ?? message?.timestamp ?? record.time),
+      role,
+      text,
+      toolName: getFirstString(payload?.name, record.toolName, message?.name),
+      toolInput: toolInputValue ? JSON.stringify(toolInputValue) : null,
+      toolOutput: toolOutputValue ? extractText(toolOutputValue) : null,
+      model: getFirstString(record.model, payload?.model, message?.model, modelFallback),
+      parentId: getFirstString(record.parentId, record.parentUuid, payload?.parent_id, message?.parentId),
+      messageId,
+      isDelta: isDeltaEvent(rawType, payload),
+      tokens,
+      costUsd,
     },
   };
 };
@@ -293,6 +438,7 @@ export const parseGeneric = async (
     let cliVersion: string | null = null;
     let title: string | null = null;
     let previousTokenCountTotals: TokenUsage | null = null;
+    let previousTokenCountTotalCostUsd: number | null = null;
 
     const events: SessionEvent[] = [];
 
@@ -306,14 +452,16 @@ export const parseGeneric = async (
       cliVersion = cliVersion ?? getFirstString(record.version, payload?.cli_version, payload?.copilotVersion);
       title = title ?? getFirstString(record.title, record.summary);
 
-      const { event, nextTokenCountTotals } = buildEventFromRecord(
+      const { event, nextTokenCountTotals, nextTokenCountTotalCostUsd } = buildEventFromRecord(
         record,
         sessionId,
         index,
         model,
         previousTokenCountTotals,
+        previousTokenCountTotalCostUsd,
       );
       previousTokenCountTotals = nextTokenCountTotals;
+      previousTokenCountTotalCostUsd = nextTokenCountTotalCostUsd;
       events.push(event);
     }
 

@@ -13,6 +13,38 @@ const getString = (value: unknown): string | null => {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 };
 
+const toFiniteNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const extractCostUsd = (record: Record<string, unknown>, message: Record<string, unknown> | null): number | null => {
+  const candidates: unknown[] = [
+    record.costUSD,
+    record.costUsd,
+    record.total_cost_usd,
+    message?.costUSD,
+    message?.costUsd,
+    (record.cost as Record<string, unknown> | null)?.total_cost_usd,
+    (record.cost as Record<string, unknown> | null)?.usd,
+  ];
+
+  for (const candidate of candidates) {
+    const parsed = toFiniteNumber(candidate);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return null;
+};
+
 const parseJsonl = (content: string): Array<Record<string, unknown>> => {
   const records: Array<Record<string, unknown>> = [];
 
@@ -100,7 +132,7 @@ const buildBaseEvent = (
     messageId: getString(message?.id),
     isDelta: false,
     tokens,
-    costUsd: null,
+    costUsd: extractCostUsd(record, message),
   };
 };
 
@@ -143,6 +175,7 @@ const buildClaudeEvents = (record: Record<string, unknown>, sessionId: string, i
         parentId: baseEvent.id,
         messageId: getString(block.id) ?? baseEvent.messageId,
         tokens: null,
+        costUsd: null,
       });
       return;
     }
@@ -159,6 +192,7 @@ const buildClaudeEvents = (record: Record<string, unknown>, sessionId: string, i
         parentId: getString(block.tool_use_id) ?? baseEvent.parentId,
         messageId: getString(block.tool_use_id) ?? baseEvent.messageId,
         tokens: null,
+        costUsd: null,
       });
     }
   });

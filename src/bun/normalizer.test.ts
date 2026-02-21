@@ -65,6 +65,30 @@ describe("normalizeSession event ids", () => {
   });
 });
 
+describe("normalizeSession costs", () => {
+  test("prefers provided event costUsd over computed pricing", () => {
+    const result = normalizeSession(
+      makeRawSession("session-cost", [
+        makeEvent({
+          id: "cost-event",
+          model: "gpt-5-codex",
+          tokens: {
+            inputTokens: 200_000,
+            outputTokens: 20_000,
+            cacheReadTokens: 100_000,
+            cacheWriteTokens: 0,
+            reasoningTokens: 5_000,
+          },
+          costUsd: 0.42,
+        }),
+      ]),
+    );
+
+    expect(result.events[0]?.costUsd).toBe(0.42);
+    expect(result.session.totalCostUsd).toBe(0.42);
+  });
+});
+
 describe("normalizeTokenUsage", () => {
   test("supports prompt/completion and cached/reasoning fields", () => {
     const usage = normalizeTokenUsage({

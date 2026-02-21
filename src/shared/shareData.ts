@@ -9,6 +9,28 @@ export interface SharePayloadHourlyAgentBreakdown {
   costUsd: number;
 }
 
+export interface ShareSummaryAgentRow {
+  source: SessionSource;
+  label: string;
+  percentage: number;
+  tokens: number;
+}
+
+export interface ShareSummaryPayload {
+  v: 1;
+  range: string;
+  dateFrom: string;
+  dateTo: string;
+  totalSessions: number;
+  totalCostUsd: number;
+  totalTokens: number;
+  totalToolCalls: number;
+  activeDays: number;
+  dateSpanDays: number;
+  longestStreakDays: number;
+  topAgents: ShareSummaryAgentRow[];
+}
+
 export interface SharePayload {
   v: 1;
   range: string;
@@ -176,6 +198,17 @@ const isBusiestSingleDay = (value: unknown): value is NonNullable<SharePayload["
   return typeof value.date === "string" && isFiniteNumber(value.tokens);
 };
 
+const isShareSummaryAgentRow = (value: unknown): value is ShareSummaryPayload["topAgents"][number] => {
+  if (!isObjectRecord(value)) return false;
+
+  return (
+    isSessionSource(value.source) &&
+    typeof value.label === "string" &&
+    isFiniteNumber(value.percentage) &&
+    isFiniteNumber(value.tokens)
+  );
+};
+
 const isSharePayload = (value: unknown): value is SharePayload => {
   if (!isObjectRecord(value) || value.v !== 1) return false;
 
@@ -215,7 +248,105 @@ const isSharePayload = (value: unknown): value is SharePayload => {
   );
 };
 
+const isShareSummaryPayload = (value: unknown): value is ShareSummaryPayload => {
+  if (!isObjectRecord(value) || value.v !== 1) return false;
+
+  return (
+    typeof value.range === "string" &&
+    typeof value.dateFrom === "string" &&
+    typeof value.dateTo === "string" &&
+    isFiniteNumber(value.totalSessions) &&
+    isFiniteNumber(value.totalCostUsd) &&
+    isFiniteNumber(value.totalTokens) &&
+    isFiniteNumber(value.totalToolCalls) &&
+    isFiniteNumber(value.activeDays) &&
+    isFiniteNumber(value.dateSpanDays) &&
+    (!("longestStreakDays" in value) || isFiniteNumber(value.longestStreakDays)) &&
+    Array.isArray(value.topAgents) &&
+    value.topAgents.every((row) => isShareSummaryAgentRow(row))
+  );
+};
+
+const clampPercentage = (value: number): number => Math.max(0, Math.min(100, value));
+const roundToOneDecimal = (value: number): number => Math.round(value * 10) / 10;
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+const computeLongestStreakDays = (timeline: SharePayload["timeline"]): number => {
+  const activeDayTimestamps = Array.from(
+    new Set(
+      timeline
+        .filter((entry) => entry.sessions > 0)
+        .map((entry) => Date.parse(`${entry.date}T00:00:00Z`))
+        .filter((timestamp) => Number.isFinite(timestamp)),
+    ),
+  ).sort((left, right) => left - right);
+
+  if (activeDayTimestamps.length === 0) return 0;
+
+  let longest = 1;
+  let current = 1;
+  for (let index = 1; index < activeDayTimestamps.length; index += 1) {
+    const previous = activeDayTimestamps[index - 1];
+    const currentValue = activeDayTimestamps[index];
+    if (currentValue - previous === ONE_DAY_MS) {
+      current += 1;
+      longest = Math.max(longest, current);
+      continue;
+    }
+
+    current = 1;
+  }
+
+  return longest;
+};
+
+export const toShareSummaryPayload = (payload: SharePayload): ShareSummaryPayload => {
+  const tokenTotal = payload.agentBreakdown.reduce((sum, entry) => sum + Math.max(0, entry.tokens), 0);
+  const sessionTotal = payload.agentBreakdown.reduce((sum, entry) => sum + Math.max(0, entry.sessions), 0);
+  const useTokens = tokenTotal > 0;
+  const denominator = useTokens ? tokenTotal : sessionTotal;
+
+  const topAgents = payload.agentBreakdown
+    .filter((entry) => entry.tokens > 0 || entry.sessions > 0)
+    .sort((left, right) => {
+      if (right.tokens !== left.tokens) return right.tokens - left.tokens;
+      if (right.sessions !== left.sessions) return right.sessions - left.sessions;
+      return right.costUsd - left.costUsd;
+    })
+    .slice(0, 3)
+    .map((entry) => {
+      const baseValue = useTokens ? entry.tokens : entry.sessions;
+      const percentage =
+        denominator > 0 ? roundToOneDecimal(clampPercentage((baseValue / denominator) * 100)) : 0;
+
+      return {
+        source: entry.source,
+        label: entry.label,
+        percentage,
+        tokens: Math.max(0, entry.tokens),
+      } satisfies ShareSummaryAgentRow;
+    });
+
+  return {
+    v: 1,
+    range: payload.range,
+    dateFrom: payload.dateFrom,
+    dateTo: payload.dateTo,
+    totalSessions: payload.totalSessions,
+    totalCostUsd: payload.totalCostUsd,
+    totalTokens: payload.totalTokens,
+    totalToolCalls: payload.totalToolCalls,
+    activeDays: payload.activeDays,
+    dateSpanDays: payload.dateSpanDays,
+    longestStreakDays: computeLongestStreakDays(payload.timeline),
+    topAgents,
+  };
+};
+
 export const encodeShareData = (payload: SharePayload): string =>
+  compressToEncodedURIComponent(JSON.stringify(payload));
+
+export const encodeShareSummaryData = (payload: ShareSummaryPayload): string =>
   compressToEncodedURIComponent(JSON.stringify(payload));
 
 export const decodeShareData = (hash: string): SharePayload | null => {
@@ -231,6 +362,35 @@ export const decodeShareData = (hash: string): SharePayload | null => {
     const parsed: unknown = JSON.parse(decompressed);
     if (!isSharePayload(parsed)) return null;
     return parsed;
+  } catch {
+    return null;
+  }
+};
+
+export const decodeShareSummaryData = (encoded: string): ShareSummaryPayload | null => {
+  if (typeof encoded !== "string" || encoded.length === 0) return null;
+
+  const normalized = encoded.replaceAll(" ", "+");
+  const decompressed = decompressFromEncodedURIComponent(normalized);
+  if (!decompressed) return null;
+
+  try {
+    const parsed: unknown = JSON.parse(decompressed);
+    if (!isShareSummaryPayload(parsed)) return null;
+
+    const longestStreakDays = Math.max(
+      0,
+      Math.round(
+        isFiniteNumber((parsed as { longestStreakDays?: unknown }).longestStreakDays)
+          ? ((parsed as { longestStreakDays: number }).longestStreakDays ?? 0)
+          : 0,
+      ),
+    );
+
+    return {
+      ...parsed,
+      longestStreakDays,
+    };
   } catch {
     return null;
   }

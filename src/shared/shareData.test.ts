@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { SharePayload } from "./shareData";
-import { decodeShareData, encodeShareData } from "./shareData";
+import {
+  decodeShareData,
+  decodeShareSummaryData,
+  encodeShareData,
+  encodeShareSummaryData,
+  toShareSummaryPayload,
+  type ShareSummaryPayload,
+} from "./shareData";
 
 const payloadFixture: SharePayload = {
   v: 1,
@@ -67,6 +74,21 @@ const payloadFixture: SharePayload = {
   busiestSingleDay: { date: "2025-12-31", tokens: 2000 },
 };
 
+const summaryFixture: ShareSummaryPayload = {
+  v: 1,
+  range: "last365",
+  dateFrom: "2025-01-01",
+  dateTo: "2025-12-31",
+  totalSessions: 10,
+  totalCostUsd: 12.34,
+  totalTokens: 56789,
+  totalToolCalls: 4321,
+  activeDays: 25,
+  dateSpanDays: 365,
+  longestStreakDays: 1,
+  topAgents: [{ source: "codex", label: "Codex", percentage: 100, tokens: 56789 }],
+};
+
 describe("share data codec", () => {
   test("round-trips payload through encode/decode", () => {
     const encoded = encodeShareData(payloadFixture);
@@ -101,5 +123,27 @@ describe("share data codec", () => {
   test("returns null for malformed payload shapes", () => {
     const malformedEncoded = encodeShareData({ v: 1 } as unknown as SharePayload);
     expect(decodeShareData(malformedEncoded)).toBeNull();
+  });
+
+  test("round-trips summary payload through encode/decode", () => {
+    const encoded = encodeShareSummaryData(summaryFixture);
+    const decoded = decodeShareSummaryData(encoded);
+
+    expect(decoded).toEqual(summaryFixture);
+  });
+
+  test("derives summary payload from full payload", () => {
+    const summary = toShareSummaryPayload(payloadFixture);
+    expect(summary.v).toBe(1);
+    expect(summary.totalSessions).toBe(payloadFixture.totalSessions);
+    expect(summary.totalTokens).toBe(payloadFixture.totalTokens);
+    expect(summary.topAgents.length).toBeGreaterThan(0);
+    expect(summary.topAgents[0]?.label).toBe("Codex");
+    expect(summary.longestStreakDays).toBe(1);
+  });
+
+  test("returns null for malformed summary payload shapes", () => {
+    const malformedSummary = encodeShareSummaryData({ v: 1 } as ShareSummaryPayload);
+    expect(decodeShareSummaryData(malformedSummary)).toBeNull();
   });
 });

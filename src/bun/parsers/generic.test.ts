@@ -177,4 +177,178 @@ describe("parseGeneric token extraction", () => {
       rmSync(fixtureDir, { recursive: true, force: true });
     }
   });
+
+  test("derives cost deltas from cumulative total_cost_usd snapshots", async () => {
+    const fixtureDir = mkdtempSync(join(tmpdir(), "ai-stats-generic-"));
+
+    try {
+      const filePath = join(fixtureDir, "token-count-cost-total.jsonl");
+      const content = [
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-02-03T11:39:00Z",
+          payload: {
+            type: "token_count",
+            info: {
+              total_cost_usd: 0.015,
+              total_token_usage: {
+                input_tokens: 100,
+                cached_input_tokens: 50,
+                output_tokens: 20,
+                reasoning_output_tokens: 10,
+              },
+            },
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-02-03T11:39:01Z",
+          payload: {
+            type: "token_count",
+            info: {
+              total_cost_usd: 0.015,
+              total_token_usage: {
+                input_tokens: 100,
+                cached_input_tokens: 50,
+                output_tokens: 20,
+                reasoning_output_tokens: 10,
+              },
+            },
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-02-03T11:39:02Z",
+          payload: {
+            type: "token_count",
+            info: {
+              total_cost_usd: 0.021,
+              total_token_usage: {
+                input_tokens: 170,
+                cached_input_tokens: 80,
+                output_tokens: 35,
+                reasoning_output_tokens: 15,
+              },
+            },
+          },
+        }),
+      ].join("\n");
+
+      writeFileSync(filePath, content, "utf8");
+      const fileStat = statSync(filePath);
+
+      const parsed = await parseGeneric(
+        {
+          path: filePath,
+          source: "codex",
+          mtime: fileStat.mtimeMs,
+          size: fileStat.size,
+        },
+        "codex",
+      );
+
+      expect(parsed).not.toBeNull();
+      if (!parsed) return;
+
+      const normalized = normalizeSession(parsed);
+      const costEvents = normalized.events
+        .filter((event) => event.kind === "meta")
+        .map((event) => event.costUsd ?? 0);
+
+      expect(costEvents).toHaveLength(3);
+      expect(costEvents[0] ?? 0).toBeCloseTo(0.015, 10);
+      expect(costEvents[1] ?? 0).toBeCloseTo(0, 10);
+      expect(costEvents[2] ?? 0).toBeCloseTo(0.006, 10);
+      expect(normalized.session.totalCostUsd ?? 0).toBeCloseTo(0.021, 10);
+    } finally {
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
+  test("derives cost deltas from top-level total_cost_usd snapshots", async () => {
+    const fixtureDir = mkdtempSync(join(tmpdir(), "ai-stats-generic-"));
+
+    try {
+      const filePath = join(fixtureDir, "token-count-cost-top-level-total.jsonl");
+      const content = [
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-02-03T11:39:00Z",
+          payload: {
+            type: "token_count",
+            total_cost_usd: 0.015,
+            info: {
+              total_token_usage: {
+                input_tokens: 100,
+                cached_input_tokens: 50,
+                output_tokens: 20,
+                reasoning_output_tokens: 10,
+              },
+            },
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-02-03T11:39:01Z",
+          payload: {
+            type: "token_count",
+            total_cost_usd: 0.015,
+            info: {
+              total_token_usage: {
+                input_tokens: 100,
+                cached_input_tokens: 50,
+                output_tokens: 20,
+                reasoning_output_tokens: 10,
+              },
+            },
+          },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-02-03T11:39:02Z",
+          payload: {
+            type: "token_count",
+            total_cost_usd: 0.021,
+            info: {
+              total_token_usage: {
+                input_tokens: 170,
+                cached_input_tokens: 80,
+                output_tokens: 35,
+                reasoning_output_tokens: 15,
+              },
+            },
+          },
+        }),
+      ].join("\n");
+
+      writeFileSync(filePath, content, "utf8");
+      const fileStat = statSync(filePath);
+
+      const parsed = await parseGeneric(
+        {
+          path: filePath,
+          source: "codex",
+          mtime: fileStat.mtimeMs,
+          size: fileStat.size,
+        },
+        "codex",
+      );
+
+      expect(parsed).not.toBeNull();
+      if (!parsed) return;
+
+      const normalized = normalizeSession(parsed);
+      const costEvents = normalized.events
+        .filter((event) => event.kind === "meta")
+        .map((event) => event.costUsd ?? 0);
+
+      expect(costEvents).toHaveLength(3);
+      expect(costEvents[0] ?? 0).toBeCloseTo(0.015, 10);
+      expect(costEvents[1] ?? 0).toBeCloseTo(0, 10);
+      expect(costEvents[2] ?? 0).toBeCloseTo(0.006, 10);
+      expect(normalized.session.totalCostUsd ?? 0).toBeCloseTo(0.021, 10);
+    } finally {
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
 });

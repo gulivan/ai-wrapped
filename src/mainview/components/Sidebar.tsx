@@ -1,5 +1,11 @@
-import type { ChangeEvent, MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useRPC } from "../hooks/useRPC";
+
+export type ShareMenuAction =
+  | "download-image"
+  | "open-summary-share"
+  | "open-full-share"
+  | "open-full-share-no-repos";
 
 interface SidebarProps {
   selectedRange: string;
@@ -13,12 +19,12 @@ interface SidebarProps {
   costGroupOptions: Array<{ value: string; label: string }>;
   onCostGroupByChange: (event: ChangeEvent<HTMLSelectElement>) => void;
   costAgentDisabled: boolean;
-  onShareCard: () => void | Promise<void>;
-  shareBusy: boolean;
+  onShareAction: (action: ShareMenuAction) => void | Promise<void>;
+  shareBusyAction: ShareMenuAction | null;
   isScanning: boolean;
 }
 
-const openExternal = (rpc: ReturnType<typeof useRPC>, url: string) => (e: MouseEvent) => {
+const openExternal = (rpc: ReturnType<typeof useRPC>, url: string) => (e: ReactMouseEvent) => {
   e.preventDefault();
   rpc.send.openExternal({ url });
 };
@@ -35,11 +41,78 @@ const Sidebar = ({
   costGroupOptions,
   onCostGroupByChange,
   costAgentDisabled,
-  onShareCard,
-  shareBusy,
+  onShareAction,
+  shareBusyAction,
   isScanning,
 }: SidebarProps) => {
   const rpc = useRPC();
+  const [isShareMenuOpen, setIsShareMenuOpen] = useState(false);
+  const shareMenuRef = useRef<HTMLDivElement | null>(null);
+  const isShareBusy = shareBusyAction !== null;
+
+  const shareMenuItems = useMemo<
+    Array<{
+      action: ShareMenuAction;
+      label: string;
+      description: string;
+    }>
+  >(
+    () => [
+      {
+        action: "download-image",
+        label: "Save summary image to ~/Downloads",
+        description: "Instant PNG export to Downloads",
+      },
+      {
+        action: "open-summary-share",
+        label: "Open summary share",
+        description: "Compact link via share_summary",
+      },
+      {
+        action: "open-full-share",
+        label: "Open full share",
+        description: "Full dashboard data",
+      },
+      {
+        action: "open-full-share-no-repos",
+        label: "Open share (no repos)",
+        description: "Full data without repository info",
+      },
+    ],
+    [],
+  );
+
+  useEffect(() => {
+    if (!isShareMenuOpen) return;
+
+    const onPointerDown = (event: globalThis.MouseEvent | TouchEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (shareMenuRef.current?.contains(target)) return;
+      setIsShareMenuOpen(false);
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsShareMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("touchstart", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("touchstart", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isShareMenuOpen]);
+
+  const runShareAction = (action: ShareMenuAction) => {
+    setIsShareMenuOpen(false);
+    void onShareAction(action);
+  };
 
   return (
     <header className="pointer-events-none fixed inset-x-0 top-0 z-30 px-4 py-4 sm:px-6">
@@ -68,8 +141,8 @@ const Sidebar = ({
             {rangeOptions.map((option) => (
               <option key={option.value} value={option.value} className="bg-slate-950 text-slate-100">
                 {option.label}
-            </option>
-          ))}
+              </option>
+            ))}
           </select>
 
           {showCostControls ? (
@@ -111,26 +184,69 @@ const Sidebar = ({
             </>
           ) : null}
 
-          <button
-            type="button"
-            onClick={() => {
-              void onShareCard();
-            }}
-            disabled={shareBusy}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-3 text-xs font-semibold text-slate-100 transition enabled:hover:border-cyan-200/70 enabled:hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm"
-            aria-label="Share dashboard via link"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M14 3h7v7" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M10 14L21 3" strokeLinecap="round" strokeLinejoin="round" />
-              <path
-                d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            {shareBusy ? "Sharing..." : "Share"}
-          </button>
+          <div ref={shareMenuRef} className="relative">
+            <button
+              type="button"
+              onClick={() => {
+                if (isShareBusy) return;
+                setIsShareMenuOpen((current) => !current);
+              }}
+              disabled={isShareBusy}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-3 text-xs font-semibold text-slate-100 transition enabled:hover:border-cyan-200/70 enabled:hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm"
+              aria-label="Share dashboard"
+              aria-expanded={isShareMenuOpen}
+              aria-haspopup="menu"
+              aria-controls="wrapped-share-menu"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 3h7v7" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M10 14L21 3" strokeLinecap="round" strokeLinejoin="round" />
+                <path
+                  d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              {isShareBusy ? "Working..." : "Share"}
+              <svg
+                viewBox="0 0 20 20"
+                className={`h-3.5 w-3.5 transition ${isShareMenuOpen ? "rotate-180" : ""}`}
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.17l3.71-3.94a.75.75 0 1 1 1.1 1.02l-4.25 4.5a.75.75 0 0 1-1.1 0l-4.25-4.5a.75.75 0 0 1 .02-1.06z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
+
+            {isShareMenuOpen && (
+              <div
+                id="wrapped-share-menu"
+                role="menu"
+                aria-label="Share options"
+                className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-72 rounded-xl border border-white/20 bg-slate-950/95 p-1.5 shadow-2xl backdrop-blur-xl"
+              >
+                {shareMenuItems.map((item) => {
+                  return (
+                    <button
+                      key={item.action}
+                      type="button"
+                      role="menuitem"
+                      disabled={isShareBusy}
+                      onClick={() => runShareAction(item.action)}
+                      className="flex w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left text-slate-100 transition enabled:hover:bg-cyan-400/10 disabled:cursor-not-allowed disabled:opacity-65"
+                    >
+                      <span className="text-xs font-semibold tracking-wide">{item.label}</span>
+                      <span className="text-[0.67rem] text-slate-300">{item.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           <button
             type="button"
