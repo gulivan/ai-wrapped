@@ -1,0 +1,405 @@
+name: Build & Release
+
+on:
+  release:
+    types: [published]
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g., v1.2.3)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  # ── macOS (arm64 + x64): .zip, .dmg, .pkg ───────────
+  macos:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-13
+            arch: x64
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build app
+        run: bun run build:prod
+
+      - name: Determine version
+        id: version
+        run: |
+          TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Create zip
+        run: |
+          cd "build/stable-macos-${{ matrix.arch }}"
+          ditto -c -k --sequesterRsrc --keepParent "AI Wrapped.app" \
+            "ai-wrapped-${{ steps.version.outputs.version }}-darwin-${{ matrix.arch }}.zip"
+
+      - name: Create DMG
+        run: |
+          brew install create-dmg
+          create-dmg \
+            --volname "AI Wrapped" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "AI Wrapped.app" 150 190 \
+            --app-drop-link 450 190 \
+            --no-internet-enable \
+            "ai-wrapped-${{ steps.version.outputs.version }}-darwin-${{ matrix.arch }}.dmg" \
+            "build/stable-macos-${{ matrix.arch }}/AI Wrapped.app" || true
+
+      - name: Create pkg
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+          APP="build/stable-macos-${ARCH}/AI Wrapped.app"
+
+          # pkgbuild needs a flat payload directory
+          mkdir -p pkg-root/Applications
+          cp -R "$APP" "pkg-root/Applications/AI Wrapped.app"
+
+          pkgbuild \
+            --root pkg-root \
+            --identifier "com.aiwrapped.app" \
+            --version "$VER" \
+            --install-location "/" \
+            "ai-wrapped-${VER}-darwin-${ARCH}.pkg"
+
+      - name: Upload release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          VER="${{ steps.version.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+
+          for FILE in \
+            "build/stable-macos-${ARCH}/ai-wrapped-${VER}-darwin-${ARCH}.zip" \
+            "ai-wrapped-${VER}-darwin-${ARCH}.dmg" \
+            "ai-wrapped-${VER}-darwin-${ARCH}.pkg"; do
+            [ -f "$FILE" ] && gh release upload "$TAG" "$FILE" --clobber
+          done
+
+  # ── Linux (x64): .tar.gz, .deb ──────────────────────
+  linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Build app
+        run: bun run build:prod
+
+      - name: Determine version
+        id: version
+        run: |
+          TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Locate build output
+        id: build-dir
+        run: |
+          # Electrobun may name the dir stable-linux-x64 or stable-linux-x86_64
+          DIR=$(ls -d build/stable-linux-* 2>/dev/null | head -1)
+          if [ -z "$DIR" ]; then
+            echo "::error::No Linux build output found in build/"
+            ls -la build/ || true
+            exit 1
+          fi
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Create tarball
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          cd "${{ steps.build-dir.outputs.dir }}"
+          tar czf "../../ai-wrapped-${VER}-linux-x64.tar.gz" .
+
+      - name: Create .deb package
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          BUILD_DIR="${{ steps.build-dir.outputs.dir }}"
+          PKG="ai-wrapped_${VER}_amd64"
+
+          mkdir -p "${PKG}/DEBIAN"
+          mkdir -p "${PKG}/usr/lib/ai-wrapped"
+          mkdir -p "${PKG}/usr/bin"
+          mkdir -p "${PKG}/usr/share/applications"
+          mkdir -p "${PKG}/usr/share/icons/hicolor/256x256/apps"
+
+          # Copy app files
+          cp -R "${BUILD_DIR}/"* "${PKG}/usr/lib/ai-wrapped/"
+
+          # Create launcher script
+          cat > "${PKG}/usr/bin/ai-wrapped" <<'LAUNCHER'
+          #!/bin/sh
+          exec /usr/lib/ai-wrapped/launcher "$@"
+          LAUNCHER
+          chmod 755 "${PKG}/usr/bin/ai-wrapped"
+
+          # Desktop entry
+          cat > "${PKG}/usr/share/applications/ai-wrapped.desktop" <<DESKTOP
+          [Desktop Entry]
+          Name=AI Wrapped
+          Comment=Your year in AI — a Spotify Wrapped-style dashboard for AI coding agents
+          Exec=/usr/bin/ai-wrapped
+          Icon=ai-wrapped
+          Type=Application
+          Categories=Development;Utility;
+          DESKTOP
+
+          # Icon
+          if [ -f "icon.png" ]; then
+            cp icon.png "${PKG}/usr/share/icons/hicolor/256x256/apps/ai-wrapped.png"
+          fi
+
+          # Control file
+          cat > "${PKG}/DEBIAN/control" <<CONTROL
+          Package: ai-wrapped
+          Version: ${VER}
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Depends: libgtk-3-0, libwebkit2gtk-4.1-0
+          Maintainer: gulivan <gulivan@users.noreply.github.com>
+          Description: Your year in AI
+           A Spotify Wrapped-style dashboard for AI coding agents.
+           Tracks sessions, tokens, costs, and activity across Claude Code,
+           Codex, Gemini, OpenCode, Droid, and Copilot.
+          CONTROL
+
+          dpkg-deb --build "${PKG}"
+          mv "${PKG}.deb" "ai-wrapped-${VER}-linux-amd64.deb"
+
+      - name: Upload release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+
+          for FILE in \
+            "ai-wrapped-${VER}-linux-x64.tar.gz" \
+            "ai-wrapped-${VER}-linux-amd64.deb"; do
+            [ -f "$FILE" ] && gh release upload "$TAG" "$FILE" --clobber
+          done
+
+  # ── Windows (x64): .zip, NSIS .exe installer ────────
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build app
+        run: bun run build:prod
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Create zip
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.version.outputs.version }}"
+          $buildDir = Get-ChildItem -Path "build" -Filter "stable-win-*" -Directory | Select-Object -First 1
+          if ($buildDir) {
+            Compress-Archive -Path "$($buildDir.FullName)/*" -DestinationPath "ai-wrapped-${ver}-win-x64.zip"
+          }
+
+      - name: Create NSIS installer
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.version.outputs.version }}"
+          $buildDir = Get-ChildItem -Path "build" -Filter "stable-win-*" -Directory | Select-Object -First 1
+          if (-not $buildDir) {
+            Write-Host "::warning::No Windows build output found — skipping NSIS"
+            exit 0
+          }
+
+          # Write NSIS script
+          $nsis = @"
+          !include "MUI2.nsh"
+
+          Name "AI Wrapped"
+          OutFile "ai-wrapped-${ver}-win-x64-setup.exe"
+          InstallDir "`$LOCALAPPDATA\AI Wrapped"
+          RequestExecutionLevel user
+
+          !insertmacro MUI_PAGE_DIRECTORY
+          !insertmacro MUI_PAGE_INSTFILES
+          !insertmacro MUI_LANGUAGE "English"
+
+          Section "Install"
+            SetOutPath "`$INSTDIR"
+            File /r "$($buildDir.FullName)\*"
+
+            CreateShortcut "`$DESKTOP\AI Wrapped.lnk" "`$INSTDIR\AI Wrapped.exe"
+            CreateDirectory "`$SMPROGRAMS\AI Wrapped"
+            CreateShortcut "`$SMPROGRAMS\AI Wrapped\AI Wrapped.lnk" "`$INSTDIR\AI Wrapped.exe"
+            CreateShortcut "`$SMPROGRAMS\AI Wrapped\Uninstall.lnk" "`$INSTDIR\uninstall.exe"
+
+            WriteUninstaller "`$INSTDIR\uninstall.exe"
+
+            WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIWrapped" "DisplayName" "AI Wrapped"
+            WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIWrapped" "UninstallString" "`$INSTDIR\uninstall.exe"
+            WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIWrapped" "DisplayVersion" "${ver}"
+            WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIWrapped" "Publisher" "AI Wrapped"
+          SectionEnd
+
+          Section "Uninstall"
+            RMDir /r "`$INSTDIR"
+            Delete "`$DESKTOP\AI Wrapped.lnk"
+            RMDir /r "`$SMPROGRAMS\AI Wrapped"
+            DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIWrapped"
+          SectionEnd
+          "@
+
+          Set-Content -Path "installer.nsi" -Value $nsis
+          choco install nsis -y --no-progress
+          makensis installer.nsi
+
+      - name: Upload release assets
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+
+          for FILE in \
+            "ai-wrapped-${VER}-win-x64.zip" \
+            "ai-wrapped-${VER}-win-x64-setup.exe"; do
+            [ -f "$FILE" ] && gh release upload "$TAG" "$FILE" --clobber
+          done
+
+  # ── Homebrew tap ─────────────────────────────────────
+  homebrew:
+    needs: macos
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+
+    steps:
+      - name: Determine version
+        id: version
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download macOS assets and compute checksums
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+          TAG="${{ github.event.release.tag_name }}"
+
+          for ARCH in arm64 x64; do
+            for EXT in dmg zip; do
+              gh release download "$TAG" -R gulivan/ai-wrapped \
+                -p "ai-wrapped-${VER}-darwin-${ARCH}.${EXT}" 2>/dev/null && break
+            done || true
+          done
+
+          for f in ai-wrapped-*-darwin-*; do
+            [ -f "$f" ] && sha256sum "$f"
+          done > checksums.txt
+          cat checksums.txt
+
+      - name: Generate cask formula
+        run: |
+          VER="${{ steps.version.outputs.version }}"
+
+          if [ -f "ai-wrapped-${VER}-darwin-arm64.dmg" ]; then
+            EXT="dmg"
+          else
+            EXT="zip"
+          fi
+
+          SHA_ARM64=$(grep "darwin-arm64" checksums.txt | awk '{print $1}')
+          SHA_X64=$(grep "darwin-x64" checksums.txt | awk '{print $1}')
+
+          cat > ai-wrapped.rb <<RUBY
+          cask "ai-wrapped" do
+            version "${VER}"
+
+            on_arm do
+              sha256 "${SHA_ARM64}"
+              url "https://github.com/gulivan/ai-wrapped/releases/download/v#{version}/ai-wrapped-#{version}-darwin-arm64.${EXT}"
+            end
+
+            on_intel do
+              sha256 "${SHA_X64}"
+              url "https://github.com/gulivan/ai-wrapped/releases/download/v#{version}/ai-wrapped-#{version}-darwin-x64.${EXT}"
+            end
+
+            name "AI Wrapped"
+            desc "Your year in AI — a Spotify Wrapped-style dashboard for AI coding agents"
+            homepage "https://ai-wrapped.com"
+
+            app "AI Wrapped.app"
+
+            zap trash: [
+              "~/.ai-wrapped",
+            ]
+          end
+          RUBY
+
+          cat ai-wrapped.rb
+
+      - name: Push to homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::warning::TAP_GITHUB_TOKEN not set — skipping Homebrew tap update"
+            exit 0
+          fi
+
+          VER="${{ steps.version.outputs.version }}"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/gulivan/homebrew-tap.git" tap
+          mkdir -p tap/Casks
+          cp ai-wrapped.rb tap/Casks/ai-wrapped.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/ai-wrapped.rb
+          git commit -m "Update ai-wrapped to ${VER}" || exit 0
+          git push

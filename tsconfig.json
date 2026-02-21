@@ -14,5 +14,5 @@
     },
     "types": ["bun"]
   },
-  "include": ["src", "electrobun.config.ts", "vite.config.ts"]
+  "include": ["src", "bin", "electrobun.config.ts", "vite.config.ts"]
 }
