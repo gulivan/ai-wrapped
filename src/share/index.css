@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "../mainview/**/*.{ts,tsx,html}";
 
 :root {
   color-scheme: dark;

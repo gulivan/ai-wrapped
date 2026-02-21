@@ -37,10 +37,12 @@ Built on top of [agent-sessions](https://github.com/jazzyalex/agent-sessions) se
 - Shareable dashboard links via [ai-wrapped.com/share](https://ai-wrapped.com/share)
 - System tray with today's stats at a glance
 
-## Install
+## Quick start
 
 ```bash
-bunx ai-wrapped
+npx ai-wrapped@latest
+# or
+bunx ai-wrapped@latest
 ```
 
 Flags: `--version`, `--rebuild`, `--uninstall`

@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { SESSION_SOURCES, type SessionSource } from "@shared/schema";
 import {
   Area,
@@ -62,6 +62,23 @@ interface HeatmapCell {
   tokens: number;
   costUsd: number;
   intensity: number;
+}
+
+interface HeatmapHoverState {
+  cell: HeatmapCell;
+  leftPx: number;
+  topPx: number;
+}
+
+interface HeatmapMonthLabel {
+  label: string;
+  weekIndex: number;
+}
+
+interface HeatmapAgentTokenRow {
+  label: string;
+  tokens: number;
+  color: string;
 }
 
 type HeatmapWeek = Array<HeatmapCell | null>;
@@ -194,6 +211,12 @@ const buildHeatmapWeeks = (cells: HeatmapCell[]): HeatmapWeek[] => {
 const chartWrapperClass = "h-56 w-full sm:h-64";
 const chartRevealClass = "wrapped-chart-reveal";
 const CHART_ANIMATION_MS = 2000;
+const HEATMAP_GAP_PX = 4;
+const HEATMAP_TOOLTIP_HALF_WIDTH_PX = 112;
+const HEATMAP_LEFT_GUTTER_PX = 36;
+const HEATMAP_MONTH_ROW_HEIGHT_PX = 18;
+const HEATMAP_WEEKDAY_LABELS = ["", "Mon", "", "Wed", "", "Fri", ""] as const;
+const HEATMAP_MONTH_FORMATTER = new Intl.DateTimeFormat("en-US", { month: "short", timeZone: "UTC" });
 
 const formatTokensTooltipWithValue = (value: number | string | undefined) => {
   const numericValue = typeof value === "number" ? value : Number(value ?? 0);
@@ -282,6 +305,61 @@ const buildActivityTooltip = (cell: HeatmapCell, dailyAgentTokensByDate: DailyAg
   return `${formatDate(cell.date)}\n${lines.join("\n")}`;
 };
 
+const buildHeatmapAgentTokenRows = (
+  cell: HeatmapCell,
+  dailyAgentTokensByDate: DailyAgentTokensByDate,
+): HeatmapAgentTokenRow[] => {
+  const agentTotals = dailyAgentTokensByDate[cell.date];
+
+  const rows = SESSION_SOURCES
+    .map((source) => ({
+      label: SOURCE_LABELS[source],
+      tokens: agentTotals?.[source] ?? 0,
+      color: SOURCE_COLORS[source] ?? "#94a3b8",
+    }))
+    .filter((entry) => entry.tokens > 0)
+    .sort((left, right) => right.tokens - left.tokens);
+
+  if (rows.length > 0) return rows;
+
+  return [
+    {
+      label: "All agents",
+      tokens: cell.tokens,
+      color: "#94a3b8",
+    },
+  ];
+};
+
+const buildHeatmapMonthLabels = (weeks: HeatmapWeek[]): HeatmapMonthLabel[] => {
+  const labels: HeatmapMonthLabel[] = [];
+  let previousMonth: number | null = null;
+  let previousLabelWeekIndex = -100;
+
+  for (let weekIndex = 0; weekIndex < weeks.length; weekIndex += 1) {
+    const week = weeks[weekIndex];
+    const firstCell = week.find((cell): cell is HeatmapCell => cell !== null);
+    if (!firstCell) continue;
+
+    const parsed = Date.parse(`${firstCell.date}T00:00:00Z`);
+    if (Number.isNaN(parsed)) continue;
+    const monthDate = new Date(parsed);
+    const month = monthDate.getUTCMonth();
+
+    if (month === previousMonth) continue;
+    previousMonth = month;
+
+    if (weekIndex - previousLabelWeekIndex < 2) continue;
+    previousLabelWeekIndex = weekIndex;
+    labels.push({
+      label: HEATMAP_MONTH_FORMATTER.format(monthDate),
+      weekIndex,
+    });
+  }
+
+  return labels;
+};
+
 const buildRepoHoverDetails = (repo: TopRepoRow): string =>
   [
     repo.repo,
@@ -334,6 +412,50 @@ const DashboardCharts = ({
   const animateCard7 = Boolean(cardAnimations[7]);
   const animateCard8 = Boolean(cardAnimations[8]);
   const hasHourlyData = hasHourlyActivity(hourlyBreakdown);
+  const heatmapViewportRef = useRef<HTMLDivElement | null>(null);
+  const heatmapTooltipHostRef = useRef<HTMLDivElement | null>(null);
+  const [heatmapTargetWidthPx, setHeatmapTargetWidthPx] = useState<number | undefined>(undefined);
+  const [heatmapHoverState, setHeatmapHoverState] = useState<HeatmapHoverState | null>(null);
+
+  useEffect(() => {
+    const viewport = heatmapViewportRef.current;
+    if (!viewport) return;
+
+    const updateWidth = (nextWidth: number) => {
+      if (!Number.isFinite(nextWidth) || nextWidth <= 0) return;
+      const rounded = Math.floor(nextWidth);
+      setHeatmapTargetWidthPx((current) => (current === rounded ? current : rounded));
+    };
+
+    updateWidth(viewport.clientWidth);
+
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        updateWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
+
+  const clearHeatmapHover = useCallback(() => {
+    setHeatmapHoverState((current) => (current === null ? current : null));
+  }, []);
+
+  const updateHeatmapHover = useCallback((event: MouseEvent<HTMLDivElement>, cell: HeatmapCell) => {
+    const tooltipHost = heatmapTooltipHostRef.current;
+    if (!tooltipHost) return;
+    const hostRect = tooltipHost.getBoundingClientRect();
+    const cellRect = event.currentTarget.getBoundingClientRect();
+
+    setHeatmapHoverState({
+      cell,
+      leftPx: cellRect.left - hostRect.left + cellRect.width / 2,
+      topPx: cellRect.top - hostRect.top,
+    });
+  }, []);
 
   const totalModelTokens = modelBreakdown.reduce((sum, row) => sum + row.tokens, 0);
   const modelRows = modelBreakdown.map((row, index) => ({
@@ -378,10 +500,31 @@ const DashboardCharts = ({
 
   const heatmap = buildHeatmap(timeline, dateFrom, dateTo);
   const heatmapWeeks = buildHeatmapWeeks(heatmap);
-  const heatmapCellSizePx = computeHeatmapCellSizePx(heatmapWeeks.length);
+  const heatmapGridTargetWidthPx =
+    typeof heatmapTargetWidthPx === "number"
+      ? Math.max(HEATMAP_GAP_PX, heatmapTargetWidthPx - HEATMAP_LEFT_GUTTER_PX)
+      : undefined;
+  const heatmapCellSizePx = computeHeatmapCellSizePx(heatmapWeeks.length, heatmapGridTargetWidthPx, HEATMAP_GAP_PX);
   const heatmapGridStyle: CSSProperties = {
     gridTemplateColumns: `repeat(${Math.max(heatmapWeeks.length, 1)}, ${heatmapCellSizePx}px)`,
   };
+  const heatmapMonthLabels = useMemo(() => buildHeatmapMonthLabels(heatmapWeeks), [heatmapWeeks]);
+  const heatmapGridWidthPx =
+    Math.max(heatmapWeeks.length, 1) * heatmapCellSizePx + Math.max(0, heatmapWeeks.length - 1) * HEATMAP_GAP_PX;
+  const heatmapTooltipHostWidthPx = heatmapTooltipHostRef.current?.clientWidth ?? 0;
+  const heatmapTooltipLeftPx =
+    heatmapHoverState === null
+      ? 0
+      : Math.max(
+          HEATMAP_TOOLTIP_HALF_WIDTH_PX,
+          Math.min(
+            heatmapHoverState.leftPx,
+            Math.max(HEATMAP_TOOLTIP_HALF_WIDTH_PX, heatmapTooltipHostWidthPx - HEATMAP_TOOLTIP_HALF_WIDTH_PX),
+          ),
+        );
+  const heatmapTooltipTopPx = heatmapHoverState === null ? 0 : Math.max(12, heatmapHoverState.topPx - 8);
+  const heatmapTooltipAgentRows =
+    heatmapHoverState === null ? [] : buildHeatmapAgentTokenRows(heatmapHoverState.cell, dailyAgentTokensByDate);
   const dateSpanDays = rangeLengthDays(dateFrom, dateTo);
 
   const costTimeline = useMemo<TimelinePoint[]>(() => {
@@ -650,39 +793,93 @@ const DashboardCharts = ({
           <p className="text-sm text-slate-300">No activity timeline available.</p>
         ) : (
           <div>
-            <div className={`rounded-2xl border border-white/12 bg-slate-950/45 p-4 ${animateCard5 ? chartRevealClass : ""}`}>
-              <div className="overflow-x-auto pb-1">
-                <div className="inline-grid gap-1" style={heatmapGridStyle}>
-                  {heatmapWeeks.map((week, weekIndex) => (
-                    <div key={`week-${weekIndex}`} className="grid grid-rows-7 gap-1">
-                      {week.map((cell, dayIndex) => {
-                        if (!cell) {
+            <div
+              ref={heatmapTooltipHostRef}
+              className={`relative rounded-2xl border border-white/12 bg-slate-950/45 p-4 ${animateCard5 ? chartRevealClass : ""}`}
+            >
+              <div ref={heatmapViewportRef} className="overflow-x-auto pb-1" onMouseLeave={clearHeatmapHover}>
+                <div className="inline-grid grid-cols-[auto_auto] gap-x-2 gap-y-2">
+                  <div style={{ width: HEATMAP_LEFT_GUTTER_PX }} />
+                  <div className="relative" style={{ width: heatmapGridWidthPx, height: HEATMAP_MONTH_ROW_HEIGHT_PX }}>
+                    {heatmapMonthLabels.map((month) => (
+                      <span
+                        key={`month-${month.weekIndex}-${month.label}`}
+                        className="absolute top-0 text-[11px] leading-none text-slate-400"
+                        style={{ left: month.weekIndex * (heatmapCellSizePx + HEATMAP_GAP_PX) }}
+                      >
+                        {month.label}
+                      </span>
+                    ))}
+                  </div>
+
+                  <div
+                    className="grid grid-rows-7 gap-1 pr-1 text-[11px] leading-none text-slate-400"
+                    style={{ width: HEATMAP_LEFT_GUTTER_PX }}
+                  >
+                    {HEATMAP_WEEKDAY_LABELS.map((label, dayIndex) => (
+                      <div key={`day-label-${dayIndex}`} className="flex items-center justify-end" style={{ height: heatmapCellSizePx }}>
+                        {label}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="inline-grid gap-1" style={heatmapGridStyle}>
+                    {heatmapWeeks.map((week, weekIndex) => (
+                      <div key={`week-${weekIndex}`} className="grid grid-rows-7 gap-1">
+                        {week.map((cell, dayIndex) => {
+                          if (!cell) {
+                            return (
+                              <div
+                                key={`empty-${weekIndex}-${dayIndex}`}
+                                className="rounded-[4px] opacity-0"
+                                style={{ width: heatmapCellSizePx, height: heatmapCellSizePx }}
+                                onMouseEnter={clearHeatmapHover}
+                              />
+                            );
+                          }
+
+                          const alpha = 0.12 + cell.intensity * 0.88;
+                          const background =
+                            cell.sessions > 0 ? `rgba(45,212,191,${alpha.toFixed(3)})` : "rgba(71,85,105,0.20)";
+
                           return (
                             <div
-                              key={`empty-${weekIndex}-${dayIndex}`}
-                              className="rounded-[4px] opacity-0"
-                              style={{ width: heatmapCellSizePx, height: heatmapCellSizePx }}
+                              key={cell.date}
+                              className="rounded-[4px]"
+                              style={{ width: heatmapCellSizePx, height: heatmapCellSizePx, background }}
+                              aria-label={buildActivityTooltip(cell, dailyAgentTokensByDate)}
+                              onMouseEnter={(event) => updateHeatmapHover(event, cell)}
+                              onMouseMove={(event) => updateHeatmapHover(event, cell)}
                             />
                           );
-                        }
-
-                        const alpha = 0.12 + cell.intensity * 0.88;
-                        const background =
-                          cell.sessions > 0 ? `rgba(45,212,191,${alpha.toFixed(3)})` : "rgba(71,85,105,0.20)";
-
-                        return (
-                          <div
-                            key={cell.date}
-                            className="rounded-[4px]"
-                            style={{ width: heatmapCellSizePx, height: heatmapCellSizePx, background }}
-                            title={buildActivityTooltip(cell, dailyAgentTokensByDate)}
-                          />
-                        );
-                      })}
-                    </div>
-                  ))}
+                        })}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
+
+              {heatmapHoverState !== null && (
+                <div
+                  className="pointer-events-none absolute z-20 w-56 rounded-xl border border-white/20 bg-slate-950/95 px-3 py-2 text-xs text-slate-100 shadow-xl"
+                  style={{ left: heatmapTooltipLeftPx, top: heatmapTooltipTopPx, transform: "translate(-50%, -100%)" }}
+                >
+                  <p className="text-sm font-semibold text-white">{formatDate(heatmapHoverState.cell.date)}</p>
+                  <p className="mt-1 text-xs text-slate-200">
+                    Tokens: {formatTokens(heatmapHoverState.cell.tokens)} ({formatNumber(heatmapHoverState.cell.tokens)})
+                  </p>
+                  <p className="text-xs text-slate-300">Sessions: {formatNumber(heatmapHoverState.cell.sessions)}</p>
+                  <p className="text-xs text-slate-300">Spend: {formatUsd(heatmapHoverState.cell.costUsd)}</p>
+                  <div className="mt-1.5 border-t border-slate-700/60 pt-1.5">
+                    {heatmapTooltipAgentRows.map((entry) => (
+                      <p key={entry.label} className="flex items-center justify-between gap-2 text-xs text-slate-300">
+                        <span style={{ color: entry.color }}>{entry.label}</span>
+                        <span>{formatTokens(entry.tokens)}</span>
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             <p className="mt-3 text-xs text-slate-400">{formatShortDate(dateFrom)} - {formatShortDate(dateTo)}</p>
           </div>

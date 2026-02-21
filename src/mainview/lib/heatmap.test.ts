@@ -8,8 +8,12 @@ describe("heatmap helpers", () => {
   });
 
   test("keeps yearly ranges compact and readable", () => {
-    expect(computeHeatmapCellSizePx(53)).toBe(12);
+    expect(computeHeatmapCellSizePx(53)).toBe(10);
     expect(computeHeatmapCellSizePx(64)).toBe(10);
+  });
+
+  test("uses available viewport width when provided", () => {
+    expect(computeHeatmapCellSizePx(53, 900)).toBe(13);
   });
 
   test("handles invalid inputs safely", () => {
