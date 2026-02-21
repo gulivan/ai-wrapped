@@ -1,4 +1,4 @@
-import type { SessionSource } from "@shared/schema";
+import type { SessionSource } from "../../shared/schema";
 import type { FileCandidate } from "../discovery";
 import { claudeParser } from "./claude";
 import { codexParser } from "./codex";

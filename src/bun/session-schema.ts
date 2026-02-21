@@ -1,1 +1,1 @@
-export type { Session, SessionEvent, SessionEventKind } from "@shared/schema";
+export type { Session, SessionEvent, SessionEventKind } from "../shared/schema";

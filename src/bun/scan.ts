@@ -1,4 +1,4 @@
-import type { SessionSource } from "@shared/schema";
+import type { SessionSource } from "../shared/schema";
 import { aggregateSessionsByDate, mergeDailyAggregates } from "./aggregator";
 import { discoverAll } from "./discovery";
 import { normalizeSession } from "./normalizer";

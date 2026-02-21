@@ -16,8 +16,8 @@ import {
   type SessionSource,
   type TokenUsage,
   type TrayStats,
-} from "@shared/schema";
-import type { AppSettings, AIStatsRPC } from "@shared/types";
+} from "../shared/schema";
+import type { AppSettings, AIStatsRPC } from "../shared/types";
 import { runScan } from "./scan";
 import {
   createEmptyDayStats,

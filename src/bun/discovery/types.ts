@@ -1,4 +1,4 @@
-import type { SessionSource } from "@shared/schema";
+import type { SessionSource } from "../../shared/schema";
 
 export interface FileCandidate {
   path: string;

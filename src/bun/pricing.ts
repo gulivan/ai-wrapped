@@ -1,4 +1,4 @@
-import type { TokenUsage } from "@shared/schema";
+import type { TokenUsage } from "../shared/schema";
 
 export interface ModelPricing {
   inputPer1M: number;

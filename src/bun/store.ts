@@ -1,8 +1,8 @@
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { SessionSource } from "@shared/schema";
-import type { AppSettings } from "@shared/types";
+import type { SessionSource } from "../shared/schema";
+import type { AppSettings } from "../shared/types";
 
 export interface ScanStateEntry {
   source: SessionSource;

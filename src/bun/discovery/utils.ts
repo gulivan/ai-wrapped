@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { SessionSource } from "@shared/schema";
+import type { SessionSource } from "../../shared/schema";
 import type { FileCandidate } from "./types";
 
 export const expandHome = (path: string): string => {
