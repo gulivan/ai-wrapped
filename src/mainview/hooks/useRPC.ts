@@ -11,6 +11,10 @@ export const electroview = Electroview.defineRPC<AIStatsRPC>({
   handlers: {},
 });
 
+// Instantiate Electroview to connect the WebSocket transport.
+// Without this, the RPC stays on a stub transport (no `send` method).
+new Electroview({ rpc: electroview });
+
 export const rpcRequest = <K extends RPCRequestName>(
   method: K,
   params: RPCRequestParams<K>,

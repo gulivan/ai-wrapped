@@ -22,7 +22,11 @@ declare module "electrobun/view" {
     ) => void;
   };
 
-  export class Electroview {
+  export class Electroview<Schema extends ElectrobunRPCSchema = ElectrobunRPCSchema> {
+    constructor(config: {
+      rpc: RPCInstance<Schema>;
+    });
+
     static defineRPC<Schema extends ElectrobunRPCSchema>(config: {
       handlers: {
         requests?: Record<string, (params: unknown) => unknown>;
