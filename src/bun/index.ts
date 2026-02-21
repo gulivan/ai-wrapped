@@ -33,7 +33,7 @@ import { buildTopRepos } from "./dashboardSummary";
 import { getOpenExternalCommand, tryResolveAllowedExternalUrl } from "./external";
 
 const isMac = process.platform === "darwin";
-const CUSTOM_MENU_ENABLED = Bun.env.AI_WRAPPED_CUSTOM_MENU === "1";
+const CUSTOM_MENU_ENABLED = Bun.env.AI_WRAPPED_CUSTOM_MENU !== "0";
 
 let isScanning = false;
 let isQuitting = false;
@@ -663,9 +663,7 @@ const refreshApplicationMenu = async () => {
               },
               { type: "separator" },
               {
-                label: "Quit",
-                action: "quit-app",
-                data: { source: "application-menu" },
+                role: "quit",
               },
             ],
           },
@@ -682,9 +680,7 @@ const refreshApplicationMenu = async () => {
         },
         { type: "separator" },
         {
-          label: "Quit",
-          action: "quit-app",
-          data: { source: "application-menu" },
+          role: "quit",
         },
       ],
     },
