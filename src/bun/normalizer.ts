@@ -1,11 +1,9 @@
 import { basename } from "node:path";
 import {
   EMPTY_TOKEN_USAGE,
-  type Session,
-  type SessionEvent,
-  type SessionEventKind,
   type TokenUsage,
 } from "../shared/schema";
+import type { Session, SessionEvent, SessionEventKind } from "./session-schema";
 import { computeCost } from "./pricing";
 import type { RawParsedSession } from "./parsers/types";
 

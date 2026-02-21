@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
-import type { SessionEvent } from "@shared/schema";
 import type { FileCandidate } from "../discovery";
 import { extractText, normalizeTimestamp, normalizeTokenUsage, resolveEventKind } from "../normalizer";
+import type { SessionEvent } from "../session-schema";
 import type { RawParsedSession, SessionParser } from "./types";
 
 const asRecord = (value: unknown): Record<string, unknown> | null => {

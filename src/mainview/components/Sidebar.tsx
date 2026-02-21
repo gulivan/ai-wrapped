@@ -1,158 +1,29 @@
-import { useCallback, useEffect, useState } from "react";
-import { SESSION_SOURCES, type SessionSource } from "@shared/schema";
-import { SOURCE_LABELS } from "../lib/constants";
-import { formatRelativeTime } from "../lib/formatters";
-import { rpcRequest, useRPC } from "../hooks/useRPC";
-
-export type SidebarView = "dashboard" | "sessions" | "session-detail" | "settings";
-
-interface SidebarProps {
-  view: SidebarView;
-  onNavigate: (view: Exclude<SidebarView, "session-detail">) => void;
-  sources: SessionSource[];
-  onSourcesChange: (next: SessionSource[]) => void;
-}
-
-interface ScanStatus {
-  isScanning: boolean;
-  lastScanAt: string | null;
-  sessionCount: number;
-}
-
-const navItems: Array<{ id: Exclude<SidebarView, "session-detail">; label: string }> = [
-  { id: "dashboard", label: "Dashboard" },
-  { id: "sessions", label: "Sessions" },
-  { id: "settings", label: "Settings" },
-];
-
-const Sidebar = ({ view, onNavigate, sources, onSourcesChange }: SidebarProps) => {
-  const rpc = useRPC();
-  const [status, setStatus] = useState<ScanStatus>({
-    isScanning: false,
-    lastScanAt: null,
-    sessionCount: 0,
-  });
-
-  const refreshStatus = useCallback(async () => {
-    try {
-      const next = await rpcRequest("getScanStatus", {});
-      setStatus(next);
-    } catch {
-      setStatus((current) => current);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshStatus();
-  }, [refreshStatus]);
-
-  useEffect(() => {
-    const startedListener = () => {
-      setStatus((current) => ({ ...current, isScanning: true }));
-    };
-    const completedListener = () => {
-      setStatus((current) => ({ ...current, isScanning: false, lastScanAt: new Date().toISOString() }));
-      void refreshStatus();
-    };
-
-    rpc.addMessageListener("scanStarted", startedListener);
-    rpc.addMessageListener("scanCompleted", completedListener);
-
-    return () => {
-      rpc.removeMessageListener("scanStarted", startedListener);
-      rpc.removeMessageListener("scanCompleted", completedListener);
-    };
-  }, [refreshStatus, rpc]);
-
-  useEffect(() => {
-    const navListener = (payload: unknown) => {
-      if (!payload || typeof payload !== "object") return;
-      const nextView = (payload as { view?: SidebarView }).view;
-      if (nextView === "dashboard" || nextView === "sessions" || nextView === "settings") {
-        onNavigate(nextView);
-      }
-    };
-
-    rpc.addMessageListener("navigate", navListener);
-    return () => {
-      rpc.removeMessageListener("navigate", navListener);
-    };
-  }, [onNavigate, rpc]);
-
-  const toggleSource = (source: SessionSource) => {
-    const next = sources.includes(source)
-      ? sources.filter((item) => item !== source)
-      : [...sources, source];
-
-    onSourcesChange(next);
-  };
-
+const Sidebar = () => {
   return (
-    <aside className="flex h-full w-full flex-col gap-5 border-r border-[var(--border-subtle)] bg-[var(--surface-0)] p-4">
-      <div>
-        <h1 className="text-lg font-semibold tracking-tight text-[var(--text-primary)]">AI Stats</h1>
-        <p className="mt-1 text-xs text-[var(--text-muted)]">Operational dashboard</p>
+    <header className="pointer-events-none fixed inset-x-0 top-0 z-30 px-4 py-4 sm:px-6">
+      <div className="pointer-events-auto mx-auto flex w-full max-w-6xl items-center justify-between rounded-full border border-white/15 bg-slate-950/45 px-5 py-3 backdrop-blur-xl">
+        <div>
+          <p className="text-xs uppercase tracking-[0.22em] text-cyan-200/90">AI Stats</p>
+          <p className="text-sm font-medium tracking-tight text-white">Wrapped</p>
+        </div>
+
+        <button
+          type="button"
+          disabled
+          className="rounded-full border border-white/20 bg-white/10 p-2.5 text-slate-100 transition hover:border-cyan-200/70 hover:bg-cyan-300/20"
+          aria-label="Settings are unavailable in wrapped view"
+        >
+          <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth="1.8">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M11.983 3.24a1.25 1.25 0 0 1 1.233.95l.328 1.311a1.25 1.25 0 0 0 .688.825l1.246.585a1.25 1.25 0 0 0 1.07.02l1.234-.555a1.25 1.25 0 0 1 1.55.488l.76 1.314a1.25 1.25 0 0 1-.203 1.614l-.96.96a1.25 1.25 0 0 0-.338 1.09l.207 1.364a1.25 1.25 0 0 0 .533.861l1.12.765a1.25 1.25 0 0 1 .42 1.645l-.76 1.314a1.25 1.25 0 0 1-1.504.573l-1.308-.393a1.25 1.25 0 0 0-1.067.17l-1.12.765a1.25 1.25 0 0 0-.533.862l-.207 1.363a1.25 1.25 0 0 1-1.49 1.035l-1.5-.304a1.25 1.25 0 0 1-.95-1.233v-1.345a1.25 1.25 0 0 0-.488-.989l-1.05-.807a1.25 1.25 0 0 0-1.041-.214l-1.308.393a1.25 1.25 0 0 1-1.504-.573l-.76-1.314a1.25 1.25 0 0 1 .42-1.645l1.12-.765a1.25 1.25 0 0 0 .533-.861l.207-1.364a1.25 1.25 0 0 0-.338-1.09l-.96-.96a1.25 1.25 0 0 1-.203-1.614l.76-1.314a1.25 1.25 0 0 1 1.55-.488l1.234.555a1.25 1.25 0 0 0 1.07-.02l1.246-.585a1.25 1.25 0 0 0 .688-.825l.328-1.311a1.25 1.25 0 0 1 1.232-.95Z"
+            />
+            <circle cx="12" cy="12" r="2.75" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
       </div>
-
-      <nav className="space-y-1">
-        {navItems.map((item) => {
-          const active =
-            item.id === view ||
-            (item.id === "sessions" && view === "session-detail");
-
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onNavigate(item.id)}
-              className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-sm transition ${
-                active
-                  ? "border-[var(--accent-border)] bg-[var(--accent-bg)] text-[var(--accent-text)]"
-                  : "border-transparent bg-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)]"
-              }`}
-            >
-              <span>{item.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-
-      <section className="space-y-2">
-        <h2 className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Agents</h2>
-        <div className="flex flex-wrap gap-2">
-          {SESSION_SOURCES.map((source) => {
-            const active = sources.includes(source);
-            return (
-              <button
-                key={source}
-                type="button"
-                onClick={() => toggleSource(source)}
-                className={`rounded-full border px-2.5 py-1 text-xs transition ${
-                  active
-                    ? "border-[var(--accent-border)] bg-[var(--accent-bg)] text-[var(--accent-text)]"
-                    : "border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-secondary)]"
-                }`}
-              >
-                {SOURCE_LABELS[source]}
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="mt-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-1)] p-3 text-xs">
-        <div className="flex items-center gap-2 text-[var(--text-secondary)]">
-          <span
-            className={`h-2.5 w-2.5 rounded-full ${status.isScanning ? "animate-pulse bg-emerald-400" : "bg-slate-500"}`}
-          />
-          <span>{status.isScanning ? "Scanning..." : "Idle"}</span>
-        </div>
-        <p className="mt-2 text-[var(--text-muted)]">{status.sessionCount} sessions indexed</p>
-        <p className="mt-1 text-[var(--text-muted)]">
-          Last scan: {status.lastScanAt ? formatRelativeTime(status.lastScanAt) : "never"}
-        </p>
-      </section>
-    </aside>
+    </header>
   );
 };
 

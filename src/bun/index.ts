@@ -8,12 +8,25 @@ import {
   Tray,
   Utils,
 } from "electrobun/bun";
-import type { TrayStats } from "@shared/schema";
+import {
+  EMPTY_TOKEN_USAGE,
+  SESSION_SOURCES,
+  type DailyAggregate,
+  type DashboardSummary,
+  type SessionSource,
+  type TokenUsage,
+  type TrayStats,
+} from "@shared/schema";
 import type { AppSettings, AIStatsRPC } from "@shared/types";
-import { openDatabase } from "./db";
 import { runScan } from "./scan";
+import {
+  createEmptyDayStats,
+  getSettings,
+  readDailyStore,
+  setSettings,
+  type DayStats,
+} from "./store";
 
-const db = openDatabase();
 const isMac = process.platform === "darwin";
 
 let isScanning = false;
@@ -22,6 +35,181 @@ let lastScanAt: string | null = null;
 let scanIntervalId: ReturnType<typeof setInterval> | null = null;
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+
+const addDayStats = (target: DayStats, source: DayStats): void => {
+  target.sessions += source.sessions;
+  target.messages += source.messages;
+  target.toolCalls += source.toolCalls;
+  target.inputTokens += source.inputTokens;
+  target.outputTokens += source.outputTokens;
+  target.cacheReadTokens += source.cacheReadTokens;
+  target.cacheWriteTokens += source.cacheWriteTokens;
+  target.reasoningTokens += source.reasoningTokens;
+  target.costUsd += source.costUsd;
+  target.durationMs += source.durationMs;
+};
+
+const toTokenUsage = (stats: DayStats): TokenUsage => ({
+  inputTokens: stats.inputTokens,
+  outputTokens: stats.outputTokens,
+  cacheReadTokens: stats.cacheReadTokens,
+  cacheWriteTokens: stats.cacheWriteTokens,
+  reasoningTokens: stats.reasoningTokens,
+});
+
+const createEmptyByAgent = (): DashboardSummary["byAgent"] => ({
+  claude: { sessions: 0, events: 0, tokens: { ...EMPTY_TOKEN_USAGE }, costUsd: 0 },
+  codex: { sessions: 0, events: 0, tokens: { ...EMPTY_TOKEN_USAGE }, costUsd: 0 },
+  gemini: { sessions: 0, events: 0, tokens: { ...EMPTY_TOKEN_USAGE }, costUsd: 0 },
+  opencode: { sessions: 0, events: 0, tokens: { ...EMPTY_TOKEN_USAGE }, costUsd: 0 },
+  droid: { sessions: 0, events: 0, tokens: { ...EMPTY_TOKEN_USAGE }, costUsd: 0 },
+  copilot: { sessions: 0, events: 0, tokens: { ...EMPTY_TOKEN_USAGE }, costUsd: 0 },
+});
+
+const isInDateRange = (date: string, dateFrom?: string, dateTo?: string): boolean => {
+  if (dateFrom && date < dateFrom) return false;
+  if (dateTo && date > dateTo) return false;
+  return true;
+};
+
+const getDailyTimelineFromStore = async (
+  dateFrom: string,
+  dateTo: string,
+  source?: SessionSource,
+): Promise<DailyAggregate[]> => {
+  const daily = await readDailyStore();
+  const dates = Object.keys(daily).sort((a, b) => a.localeCompare(b));
+
+  const rows = dates
+    .filter((date) => isInDateRange(date, dateFrom, dateTo))
+    .map((date) => {
+      const entry = daily[date];
+      if (!entry) return null;
+
+      const stats = source ? entry.bySource[source] : entry.totals;
+      if (!stats) return null;
+
+      return {
+        date,
+        source: source ?? "all",
+        model: "all",
+        sessionCount: stats.sessions,
+        messageCount: stats.messages,
+        toolCallCount: stats.toolCalls,
+        tokens: toTokenUsage(stats),
+        costUsd: stats.costUsd,
+        totalDurationMs: stats.durationMs,
+      } satisfies DailyAggregate;
+    })
+    .filter((row): row is DailyAggregate => row !== null);
+
+  return rows;
+};
+
+const getDashboardSummaryFromStore = async (
+  dateFrom?: string,
+  dateTo?: string,
+): Promise<DashboardSummary> => {
+  const daily = await readDailyStore();
+  const byAgent = createEmptyByAgent();
+  const byModelMap = new Map<string, DayStats>();
+  const totals = createEmptyDayStats();
+
+  for (const date of Object.keys(daily)) {
+    if (!isInDateRange(date, dateFrom, dateTo)) continue;
+
+    const entry = daily[date];
+    if (!entry) continue;
+
+    addDayStats(totals, entry.totals);
+
+    for (const source of SESSION_SOURCES) {
+      const stats = entry.bySource[source];
+      if (!stats) continue;
+
+      const target = byAgent[source];
+      target.sessions += stats.sessions;
+      target.events += stats.messages + stats.toolCalls;
+      target.tokens.inputTokens += stats.inputTokens;
+      target.tokens.outputTokens += stats.outputTokens;
+      target.tokens.cacheReadTokens += stats.cacheReadTokens;
+      target.tokens.cacheWriteTokens += stats.cacheWriteTokens;
+      target.tokens.reasoningTokens += stats.reasoningTokens;
+      target.costUsd += stats.costUsd;
+    }
+
+    for (const [model, modelStats] of Object.entries(entry.byModel)) {
+      if (!byModelMap.has(model)) {
+        byModelMap.set(model, createEmptyDayStats());
+      }
+
+      addDayStats(byModelMap.get(model) as DayStats, modelStats);
+    }
+  }
+
+  const byModel = [...byModelMap.entries()]
+    .map(([model, stats]) => ({
+      model,
+      sessions: stats.sessions,
+      tokens: toTokenUsage(stats),
+      costUsd: stats.costUsd,
+    }))
+    .sort((left, right) => {
+      if (right.sessions !== left.sessions) return right.sessions - left.sessions;
+      return right.costUsd - left.costUsd;
+    })
+    .slice(0, 20);
+
+  const dailyTimeline =
+    dateFrom && dateTo ? await getDailyTimelineFromStore(dateFrom, dateTo) : [];
+
+  return {
+    totals: {
+      sessions: totals.sessions,
+      events: totals.messages + totals.toolCalls,
+      messages: totals.messages,
+      toolCalls: totals.toolCalls,
+      tokens: toTokenUsage(totals),
+      costUsd: totals.costUsd,
+      durationMs: totals.durationMs,
+    },
+    byAgent,
+    byModel,
+    dailyTimeline,
+    topRepos: [],
+    topTools: [],
+  };
+};
+
+const getSessionCountFromStore = async (): Promise<number> => {
+  const daily = await readDailyStore();
+  let count = 0;
+
+  for (const entry of Object.values(daily)) {
+    count += entry.totals.sessions;
+  }
+
+  return count;
+};
+
+const getTrayStatsFromStore = async (): Promise<TrayStats> => {
+  const today = new Date().toISOString().slice(0, 10);
+  const daily = await readDailyStore();
+  const todayStats = daily[today]?.totals ?? createEmptyDayStats();
+
+  return {
+    todayTokens:
+      todayStats.inputTokens +
+      todayStats.outputTokens +
+      todayStats.cacheReadTokens +
+      todayStats.cacheWriteTokens +
+      todayStats.reasoningTokens,
+    todayCost: todayStats.costUsd,
+    todaySessions: todayStats.sessions,
+    todayEvents: todayStats.messages + todayStats.toolCalls,
+    activeSessions: 0,
+  };
+};
 
 const resolveTrayIconPath = (): string => {
   const bundledPath = join(PATHS.VIEWS_FOLDER, "mainview", "tray-icon.png");
@@ -49,8 +237,8 @@ const resolveTrayIconPath = (): string => {
   return "";
 };
 
-const updateSettings = (patch: Partial<AppSettings>): AppSettings => {
-  const current = db.getAllSettings();
+const updateSettings = async (patch: Partial<AppSettings>): Promise<AppSettings> => {
+  const current = await getSettings();
   const next: AppSettings = {
     ...current,
     ...patch,
@@ -60,11 +248,7 @@ const updateSettings = (patch: Partial<AppSettings>): AppSettings => {
     },
   };
 
-  db.setSetting("scanOnLaunch", next.scanOnLaunch);
-  db.setSetting("scanIntervalMinutes", next.scanIntervalMinutes);
-  db.setSetting("theme", next.theme);
-  db.setSetting("customPaths", next.customPaths);
-
+  await setSettings(next);
   return next;
 };
 
@@ -112,11 +296,11 @@ const buildTrayMenu = (stats: TrayStats) => [
   },
 ];
 
-const updateTrayMenu = () => {
+const updateTrayMenu = async () => {
   if (!tray) return;
 
   try {
-    const stats = db.getTrayStats();
+    const stats = await getTrayStatsFromStore();
     tray.setMenu(buildTrayMenu(stats));
   } catch (error) {
     console.warn("[tray] Failed to update stats", error);
@@ -151,7 +335,7 @@ const createMainWindow = () => {
             mainWindow = null;
           }
         });
-        updateTrayMenu();
+        void updateTrayMenu();
         return;
       } catch {
         // If the native window was already closed, recreate lazily.
@@ -163,7 +347,7 @@ const createMainWindow = () => {
     }
 
     if (!isQuitting) {
-      updateTrayMenu();
+      void updateTrayMenu();
     }
   });
 
@@ -201,7 +385,7 @@ const ensureMainWindow = () => {
   return { window: mainWindow, created: true };
 };
 
-const showMainWindow = (view: "dashboard" | "sessions" | "settings" = "dashboard") => {
+const showMainWindow = (view: "dashboard" | "settings" = "dashboard") => {
   const { window } = ensureMainWindow();
 
   if (window.isMinimized()) {
@@ -246,12 +430,12 @@ const runScanWithNotifications = async (fullScan = false) => {
   }
 
   isScanning = true;
-  updateTrayMenu();
-  refreshApplicationMenu();
+  void updateTrayMenu();
+  void refreshApplicationMenu();
   rpc.send.scanStarted({});
 
   try {
-    const result = await runScan(db, { fullScan });
+    const result = await runScan({ fullScan });
     lastScanAt = new Date().toISOString();
 
     rpc.send.scanCompleted({ scanned: result.scanned, total: result.total });
@@ -268,8 +452,8 @@ const runScanWithNotifications = async (fullScan = false) => {
     return { scanned: 0, total: 0, errors: 1 };
   } finally {
     isScanning = false;
-    updateTrayMenu();
-    refreshApplicationMenu();
+    void updateTrayMenu();
+    void refreshApplicationMenu();
   }
 };
 
@@ -285,8 +469,8 @@ const configureBackgroundScan = (intervalMinutes: number) => {
   }, safeMinutes * 60_000);
 };
 
-const refreshApplicationMenu = () => {
-  const settings = db.getAllSettings();
+const refreshApplicationMenu = async () => {
+  const settings = await getSettings();
 
   ApplicationMenu.setApplicationMenu([
     ...(isMac
@@ -353,13 +537,13 @@ const refreshApplicationMenu = () => {
   ]);
 };
 
-const toggleDarkMode = () => {
-  const current = db.getAllSettings();
+const toggleDarkMode = async () => {
+  const current = await getSettings();
   const nextTheme: AppSettings["theme"] = current.theme === "dark" ? "light" : "dark";
-  const next = updateSettings({ theme: nextTheme });
+  const next = await updateSettings({ theme: nextTheme });
 
   rpc.send.themeChanged({ theme: next.theme });
-  refreshApplicationMenu();
+  void refreshApplicationMenu();
 };
 
 const createTray = () => {
@@ -397,41 +581,31 @@ const createTray = () => {
     }
   });
 
-  updateTrayMenu();
+  void updateTrayMenu();
 };
 
 const rpc = BrowserView.defineRPC<AIStatsRPC>({
   handlers: {
     requests: {
-      getDashboardSummary: ({ dateFrom, dateTo }) => db.getDashboardSummary(dateFrom, dateTo),
-      getDailyTimeline: ({ dateFrom, dateTo, source }) => db.getDailyTimeline(dateFrom, dateTo, source),
-      getSessions: (filters) => db.querySessions(filters),
-      getSession: ({ id }) => db.getSession(id),
-      getSessionEvents: ({ sessionId }) => db.getSessionEvents(sessionId),
-      getDistinctModels: () => db.getDistinctModels(),
-      getDistinctRepos: () => db.getDistinctRepos(),
+      getDashboardSummary: ({ dateFrom, dateTo }) => getDashboardSummaryFromStore(dateFrom, dateTo),
+      getDailyTimeline: ({ dateFrom, dateTo, source }) => getDailyTimelineFromStore(dateFrom, dateTo, source),
       triggerScan: async ({ fullScan }) => {
         const result = await runScanWithNotifications(Boolean(fullScan));
         return { scanned: result.scanned, total: result.total };
       },
-      getScanStatus: () => ({
+      getScanStatus: async () => ({
         isScanning,
         lastScanAt,
-        sessionCount: db.getStats().sessionCount,
+        sessionCount: await getSessionCountFromStore(),
       }),
-      getTrayStats: () => db.getTrayStats(),
-      getSettings: () => db.getAllSettings(),
-      updateSettings: (patch) => {
-        const next = updateSettings(patch);
+      getTrayStats: () => getTrayStatsFromStore(),
+      getSettings: () => getSettings(),
+      updateSettings: async (patch) => {
+        const next = await updateSettings(patch);
         configureBackgroundScan(next.scanIntervalMinutes);
-        refreshApplicationMenu();
+        void refreshApplicationMenu();
         rpc.send.themeChanged({ theme: next.theme });
         return true;
-      },
-      getDbStats: () => db.getStats(),
-      vacuumDatabase: () => {
-        db.vacuum();
-        return db.getStats();
       },
     },
     messages: {
@@ -466,21 +640,25 @@ ApplicationMenu.on("application-menu-clicked", (event: unknown) => {
       quitApp();
       break;
     case "toggle-dark-mode":
-      toggleDarkMode();
+      void toggleDarkMode();
       break;
     default:
       break;
   }
 });
 
-refreshApplicationMenu();
+const bootstrap = async () => {
+  await refreshApplicationMenu();
 
-const initialSettings = db.getAllSettings();
-configureBackgroundScan(initialSettings.scanIntervalMinutes);
+  const initialSettings = await getSettings();
+  configureBackgroundScan(initialSettings.scanIntervalMinutes);
 
-if (initialSettings.scanOnLaunch) {
-  void runScanWithNotifications(false);
-}
+  if (initialSettings.scanOnLaunch) {
+    await runScanWithNotifications(false);
+  }
+};
+
+void bootstrap();
 
 process.on("exit", () => {
   if (scanIntervalId) {
@@ -492,6 +670,4 @@ process.on("exit", () => {
     tray.remove();
     tray = null;
   }
-
-  db.close();
 });

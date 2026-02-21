@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { SessionEvent } from "@shared/schema";
+import type { SessionEvent } from "./session-schema";
 import { normalizeSession } from "./normalizer";
 import type { RawParsedSession } from "./parsers/types";
 

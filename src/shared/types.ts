@@ -1,13 +1,5 @@
 import type { RPCSchema } from "electrobun/bun";
-import type {
-  DailyAggregate,
-  DashboardSummary,
-  Session,
-  SessionEvent,
-  SessionFilters,
-  SessionSource,
-  TrayStats,
-} from "./schema";
+import type { DailyAggregate, DashboardSummary, SessionSource, TrayStats } from "./schema";
 
 export interface AppSettings {
   scanOnLaunch: boolean;
@@ -26,26 +18,6 @@ export type AIStatsRPC = {
       getDailyTimeline: {
         params: { dateFrom: string; dateTo: string; source?: SessionSource };
         response: DailyAggregate[];
-      };
-      getSessions: {
-        params: SessionFilters;
-        response: { sessions: Session[]; total: number };
-      };
-      getSession: {
-        params: { id: string };
-        response: Session | null;
-      };
-      getSessionEvents: {
-        params: { sessionId: string };
-        response: SessionEvent[];
-      };
-      getDistinctModels: {
-        params: {};
-        response: string[];
-      };
-      getDistinctRepos: {
-        params: {};
-        response: string[];
       };
       triggerScan: {
         params: { fullScan?: boolean };
@@ -67,14 +39,6 @@ export type AIStatsRPC = {
         params: Partial<AppSettings>;
         response: boolean;
       };
-      getDbStats: {
-        params: {};
-        response: { sessionCount: number; eventCount: number; dbSizeBytes: number };
-      };
-      vacuumDatabase: {
-        params: {};
-        response: { sessionCount: number; eventCount: number; dbSizeBytes: number };
-      };
     };
     messages: {
       log: { msg: string; level?: "info" | "warn" | "error" };
@@ -88,7 +52,7 @@ export type AIStatsRPC = {
       scanProgress: { phase: string; current: number; total: number };
       scanStarted: {};
       scanCompleted: { scanned: number; total: number };
-      navigate: { view: "dashboard" | "sessions" | "settings" };
+      navigate: { view: "dashboard" | "settings" };
       themeChanged: { theme: AppSettings["theme"] };
     };
   }>;

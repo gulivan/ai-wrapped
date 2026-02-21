@@ -1,4 +1,5 @@
-import type { SessionEvent, SessionSource } from "@shared/schema";
+import type { SessionSource } from "@shared/schema";
+import type { SessionEvent } from "../session-schema";
 import type { FileCandidate } from "../discovery";
 
 export interface RawParsedSession {

@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
-import type { SessionEvent, SessionSource } from "@shared/schema";
+import type { SessionSource } from "@shared/schema";
 import type { FileCandidate } from "../discovery";
+import type { SessionEvent } from "../session-schema";
 import { extractText, normalizeTimestamp, normalizeTokenUsage, resolveEventKind } from "../normalizer";
 import type { RawParsedSession } from "./types";
 

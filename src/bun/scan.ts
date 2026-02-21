@@ -1,8 +1,10 @@
 import type { SessionSource } from "@shared/schema";
-import type { DB } from "./db";
+import { aggregateSessionsByDate, mergeDailyAggregates } from "./aggregator";
 import { discoverAll } from "./discovery";
 import { normalizeSession } from "./normalizer";
 import { parseFile } from "./parsers";
+import type { Session } from "./session-schema";
+import { readDailyStore, readScanState, writeDailyStore, writeScanState } from "./store";
 
 export interface ScanOptions {
   fullScan?: boolean;
@@ -15,63 +17,56 @@ export interface ScanResult {
   errors: number;
 }
 
-export const runScan = async (db: DB, options: ScanOptions = {}): Promise<ScanResult> => {
+export const runScan = async (options: ScanOptions = {}): Promise<ScanResult> => {
   const candidates = await discoverAll(options.sources);
+  const scanState = await readScanState();
 
   const changed = options.fullScan
     ? candidates
     : candidates.filter((candidate) => {
-        const state = db.getScanState(candidate.path);
-        return !state || state.mtime_ms !== candidate.mtime || state.file_size !== candidate.size;
+        const state = scanState[candidate.path];
+        return !state || state.mtimeMs !== candidate.mtime || state.fileSize !== candidate.size;
       });
 
   let scanned = 0;
   let errors = 0;
-  const affectedDates = new Set<string>();
+  const sessions: Session[] = [];
 
   for (const candidate of changed) {
     const parsed = await parseFile(candidate);
 
     if (!parsed) {
       errors += 1;
-      db.upsertScanState({
-        file_path: candidate.path,
+      scanState[candidate.path] = {
         source: candidate.source,
-        file_size: candidate.size,
-        mtime_ms: candidate.mtime,
-        parsed_at: new Date().toISOString(),
-        session_id: null,
-      });
+        fileSize: candidate.size,
+        mtimeMs: candidate.mtime,
+        parsedAt: new Date().toISOString(),
+      };
       continue;
     }
 
-    const { session, events } = normalizeSession(parsed);
+    const { session } = normalizeSession(parsed);
+    sessions.push(session);
 
-    db.upsertSession(session);
-    db.deleteSessionEvents(session.id);
-    db.insertEvents(events);
-    db.upsertScanState({
-      file_path: candidate.path,
+    scanState[candidate.path] = {
       source: candidate.source,
-      file_size: candidate.size,
-      mtime_ms: candidate.mtime,
-      parsed_at: session.parsedAt,
-      session_id: session.id,
-    });
-
-    if (session.startTime) {
-      affectedDates.add(session.startTime.slice(0, 10));
-    }
+      fileSize: candidate.size,
+      mtimeMs: candidate.mtime,
+      parsedAt: session.parsedAt,
+    };
 
     scanned += 1;
   }
 
-  if (affectedDates.size === 0 && options.fullScan && changed.length > 0) {
-    db.rebuildDailyAggregates();
-  } else {
-    for (const date of affectedDates) {
-      db.rebuildDailyAggregates(date);
-    }
+  await writeScanState(scanState);
+
+  if (options.fullScan) {
+    await writeDailyStore(aggregateSessionsByDate(sessions));
+  } else if (sessions.length > 0) {
+    const existingDaily = await readDailyStore();
+    const nextDaily = mergeDailyAggregates(existingDaily, aggregateSessionsByDate(sessions));
+    await writeDailyStore(nextDaily);
   }
 
   return {

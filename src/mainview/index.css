@@ -3,51 +3,51 @@
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --surface-0: #0a1118;
-  --surface-1: #101a25;
-  --surface-2: #152130;
-  --text-primary: #e8f0fa;
-  --text-secondary: #b8c4d3;
-  --text-muted: #8191a6;
-  --border-soft: #24344755;
-  --border-subtle: #2a3e5666;
-  --border-strong: #486080;
-  --accent-bg: #0d2a3d;
-  --accent-border: #2f8fbd;
-  --accent-text: #8dd8ff;
+  --surface-0: #020617;
+  --surface-1: #091126;
+  --surface-2: #101a34;
+  --text-primary: #f8fbff;
+  --text-secondary: #c8d2e7;
+  --text-muted: #8ea2c2;
+  --border-soft: #8ba3c933;
+  --border-subtle: #c5d4ec2e;
+  --border-strong: #8bd5ff99;
+  --accent-bg: #0d2449;
+  --accent-border: #63c7ff;
+  --accent-text: #a7e6ff;
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --surface-0: #f6f8fb;
-  --surface-1: #ffffff;
-  --surface-2: #eef2f7;
-  --text-primary: #1f2937;
-  --text-secondary: #4b5563;
-  --text-muted: #6b7280;
-  --border-soft: #d1d5db;
-  --border-subtle: #cbd5e1;
-  --border-strong: #94a3b8;
-  --accent-bg: #e0f2fe;
-  --accent-border: #38bdf8;
-  --accent-text: #0369a1;
+  --surface-0: #eaf3ff;
+  --surface-1: #f8fbff;
+  --surface-2: #e5f1ff;
+  --text-primary: #101828;
+  --text-secondary: #334155;
+  --text-muted: #5b6b85;
+  --border-soft: #7a8ba81f;
+  --border-subtle: #4e6b9536;
+  --border-strong: #2563eb99;
+  --accent-bg: #cbe7ff;
+  --accent-border: #1d4ed8;
+  --accent-text: #15387f;
 }
 
 @media (prefers-color-scheme: light) {
   :root[data-theme="system"] {
     color-scheme: light;
-    --surface-0: #f6f8fb;
-    --surface-1: #ffffff;
-    --surface-2: #eef2f7;
-    --text-primary: #1f2937;
-    --text-secondary: #4b5563;
-    --text-muted: #6b7280;
-    --border-soft: #d1d5db;
-    --border-subtle: #cbd5e1;
-    --border-strong: #94a3b8;
-    --accent-bg: #e0f2fe;
-    --accent-border: #38bdf8;
-    --accent-text: #0369a1;
+    --surface-0: #eaf3ff;
+    --surface-1: #f8fbff;
+    --surface-2: #e5f1ff;
+    --text-primary: #101828;
+    --text-secondary: #334155;
+    --text-muted: #5b6b85;
+    --border-soft: #7a8ba81f;
+    --border-subtle: #4e6b9536;
+    --border-strong: #2563eb99;
+    --accent-bg: #cbe7ff;
+    --accent-border: #1d4ed8;
+    --accent-text: #15387f;
   }
 }
 
@@ -58,15 +58,138 @@
 html,
 body,
 #root {
-  min-height: 100%;
+  height: 100%;
 }
 
 body {
   margin: 0;
-  font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
   background:
-    radial-gradient(90rem 50rem at 88% -10%, #153a57 0%, transparent 52%),
-    radial-gradient(60rem 30rem at -15% 120%, #1f3f3f 0%, transparent 55%),
+    radial-gradient(90rem 48rem at 92% -8%, rgba(59, 130, 246, 0.25) 0%, transparent 62%),
+    radial-gradient(75rem 42rem at -8% 108%, rgba(20, 184, 166, 0.28) 0%, transparent 55%),
     var(--surface-0);
   color: var(--text-primary);
+}
+
+.wrapped-scroll {
+  height: 100%;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  scroll-behavior: smooth;
+}
+
+.wrapped-card {
+  position: relative;
+  min-height: calc(100vh - 7rem);
+  scroll-snap-align: start;
+  border-radius: 2rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(18px);
+  padding: 1.5rem;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.wrapped-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.wrapped-card-hero {
+  background:
+    linear-gradient(135deg, rgba(38, 21, 91, 0.86), rgba(13, 59, 141, 0.8) 54%, rgba(13, 148, 136, 0.7)),
+    rgba(2, 6, 23, 0.78);
+}
+
+.wrapped-card-time {
+  background: linear-gradient(140deg, rgba(14, 36, 87, 0.78), rgba(15, 70, 124, 0.68), rgba(14, 165, 233, 0.38));
+}
+
+.wrapped-card-models {
+  background: linear-gradient(140deg, rgba(22, 36, 86, 0.8), rgba(10, 73, 107, 0.72), rgba(34, 197, 94, 0.22));
+}
+
+.wrapped-card-agents {
+  background: linear-gradient(142deg, rgba(10, 45, 85, 0.8), rgba(8, 80, 105, 0.72), rgba(56, 189, 248, 0.34));
+}
+
+.wrapped-card-activity {
+  background: linear-gradient(145deg, rgba(4, 32, 62, 0.85), rgba(2, 75, 82, 0.72), rgba(45, 212, 191, 0.35));
+}
+
+.wrapped-card-cost {
+  background: linear-gradient(145deg, rgba(12, 37, 89, 0.82), rgba(7, 75, 121, 0.7), rgba(56, 189, 248, 0.32));
+}
+
+.wrapped-card-repos {
+  background: linear-gradient(145deg, rgba(10, 45, 77, 0.84), rgba(11, 81, 110, 0.72), rgba(20, 184, 166, 0.34));
+}
+
+.wrapped-card-loading {
+  background: linear-gradient(145deg, rgba(2, 6, 23, 0.88), rgba(13, 30, 60, 0.78));
+  align-items: center;
+  text-align: center;
+}
+
+.wrapped-kicker {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(186, 230, 253, 0.92);
+}
+
+.wrapped-title {
+  margin: 0.35rem 0 0;
+  font-size: clamp(1.8rem, 4vw, 3.1rem);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: #fff;
+}
+
+.wrapped-tile {
+  border-radius: 1.2rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(2, 6, 23, 0.37);
+  padding: 1rem;
+  backdrop-filter: blur(8px);
+}
+
+.wrapped-label {
+  margin: 0;
+  font-size: 0.68rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(203, 213, 225, 0.92);
+}
+
+.wrapped-button {
+  height: 2.5rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(125, 211, 252, 0.6);
+  padding: 0 1rem;
+  background: rgba(56, 189, 248, 0.18);
+  color: #f8fafc;
+  font-size: 0.82rem;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.wrapped-button:hover {
+  background: rgba(56, 189, 248, 0.28);
+}
+
+@media (max-width: 768px) {
+  .wrapped-card {
+    min-height: calc(100vh - 6.5rem);
+    border-radius: 1.5rem;
+    padding: 1.1rem;
+  }
 }
