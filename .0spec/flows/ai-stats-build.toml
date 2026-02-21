@@ -1,0 +1,291 @@
+[flow]
+name = "ai-stats-build"
+description = "Build ai-stats from existing architecture spec — scaffold through commit"
+
+# NOTE: ARCHITECTURE.md (1462 lines), SESSION_FORMATS.md, and AGENT_SESSIONS_REFERENCE.md
+# are pre-seeded in the project root from prior research/planning runs.
+# No consolidation stage needed — ARCHITECTURE.md is the authoritative spec.
+
+# ─── Phase 1: Scaffold ─────────────────────────────────
+
+[[stages]]
+id = "scaffold"
+name = "Project Scaffold"
+type = "seq"
+team = "implementors"
+prompt = """
+Read ARCHITECTURE.md in the project root — it is the authoritative spec.
+
+Create the project scaffold as specified in Section 1 (Project Structure) and Section 9 (Build & Dev Workflow).
+
+Constraints:
+- Use Electrobun react-tailwind-vite pattern (Vite builds to dist/, copy config maps to views/)
+- Remove "type": "module" and "module" from package.json if present
+- SQLite via bun:sqlite (built into Bun, no extra deps)
+- Tailwind v4 via @tailwindcss/vite plugin
+- Use concurrently for dev:hmr script
+
+Only skeleton — stub files with empty exports/components. No business logic.
+
+Verify:
+- `bun install` succeeds
+- Vite build compiles without errors
+- Main process file parses without errors
+"""
+output = { format = "markdown", name = "scaffold.md" }
+
+[[stages]]
+id = "qa-scaffold"
+name = "QA Scaffold"
+type = "seq"
+team = "reviewers"
+depends_on = ["scaffold"]
+input_from = ["scaffold"]
+prompt = """
+Read ARCHITECTURE.md for the expected project structure.
+
+Verify the scaffold:
+1. `bun install` succeeds
+2. Vite build compiles without errors
+3. All files from Section 1 of ARCHITECTURE.md exist (check file tree)
+4. package.json has correct scripts (dev, dev:hmr, build)
+5. electrobun.config.ts is valid
+6. No "type": "module" in package.json
+
+Output JSON: { "verdict": "pass" or "fail", "issues": [...] }
+"""
+output = { format = "json", name = "qa-scaffold.json" }
+
+[[stages]]
+id = "fix-scaffold"
+name = "Fix Scaffold Issues"
+type = "loop"
+team = "implementors"
+depends_on = ["qa-scaffold"]
+input_from = ["qa-scaffold"]
+prompt = "Fix all issues from QA report."
+max_loops = 2
+loop_to = "qa-scaffold"
+condition = "qa-scaffold.verdict != 'pass'"
+output = { format = "diff", name = "scaffold-fixes.diff" }
+
+# ─── Phase 2: Parsers & Data Layer ─────────────────────
+
+[[stages]]
+id = "data-layer"
+name = "Session Parsers + SQLite + RPC"
+type = "seq"
+team = "implementors"
+depends_on = ["fix-scaffold"]
+prompt = """
+Read ARCHITECTURE.md (Sections 2-6) and SESSION_FORMATS.md in the project root. Implement:
+
+1. Session discovery (src/bun/discovery/):
+   - Discover Claude Code sessions: ~/.claude/projects/*/*.jsonl
+   - Discover Codex CLI sessions: ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
+   - Discover other agents if present (Gemini, Copilot, OpenCode)
+   - Return file paths with agent source type
+
+2. JSONL parsers (src/bun/parsers/):
+   - Claude Code parser — handle nested message.content, uuid/parentUuid threading
+   - Codex CLI parser — handle top-level content, delta streaming chunks
+   - Generic parser fallback
+   - All parsers produce normalized SessionEvent[]
+
+3. Normalizer (src/bun/normalizer.ts):
+   - Map raw event types to SessionEventKind (user, assistant, tool_call, tool_result, error, meta)
+   - Extract text from various content formats
+   - Handle timestamp format variations (ISO 8601, epoch seconds/ms)
+
+4. SQLite database (src/bun/db.ts):
+   - Tables as specified in Section 3 of ARCHITECTURE.md
+   - Migration/init, upsert parsed sessions, query functions
+
+5. RPC types (src/shared/types.ts) + wiring (src/bun/index.ts):
+   - As specified in Section 6 of ARCHITECTURE.md
+
+Verify:
+- TypeScript compiles without errors
+- DB initializes and creates tables
+- At least one real session file parses successfully
+"""
+output = { format = "markdown", name = "data-layer.md" }
+
+[[stages]]
+id = "qa-data"
+name = "QA Data Layer"
+type = "seq"
+team = "reviewers"
+depends_on = ["data-layer"]
+input_from = ["data-layer"]
+prompt = """
+Read ARCHITECTURE.md for the expected schema and RPC surface.
+
+Verify the data layer:
+1. SQLite schema matches Section 3 of ARCHITECTURE.md
+2. Session discovery finds real session files on this machine
+3. At least one Claude Code and one Codex session parses without errors
+4. Normalized events have correct kind, text, timestamps
+5. RPC types are complete and type-safe
+6. TypeScript compiles
+
+Output JSON: { "verdict": "pass" or "fail", "issues": [...] }
+"""
+output = { format = "json", name = "qa-data.json" }
+
+[[stages]]
+id = "fix-data"
+name = "Fix Data Layer Issues"
+type = "loop"
+team = "implementors"
+depends_on = ["qa-data"]
+input_from = ["qa-data"]
+prompt = "Fix all issues from QA report."
+max_loops = 2
+loop_to = "qa-data"
+condition = "qa-data.verdict != 'pass'"
+output = { format = "diff", name = "data-fixes.diff" }
+
+# ─── Phase 3: Dashboard UI ─────────────────────────────
+
+[[stages]]
+id = "dashboard-ui"
+name = "Dashboard UI Components"
+type = "seq"
+team = "implementors"
+depends_on = ["fix-data"]
+prompt = """
+Read ARCHITECTURE.md Section 7 (Component Tree). Implement the React dashboard UI:
+
+1. App shell (App.tsx) — sidebar nav + main content area
+2. Dashboard page — summary cards (total sessions, total events, tool calls today) + charts
+3. Charts — session count over time (line), events by agent (bar), tool call frequency (bar), model usage (pie)
+4. Session browser page — filterable list of all sessions, search by repo/agent/date
+5. Session detail page — event timeline with kind icons, expandable tool call details
+6. Settings page — configure watched directories, rescan interval
+7. useRPC hook — typed wrapper around Electroview RPC calls
+
+Use Tailwind v4 for all styling. Dark theme by default.
+Use Recharts for charts.
+
+Verify:
+- Vite build compiles without errors
+- All components render (no runtime crashes on import)
+"""
+output = { format = "markdown", name = "dashboard-ui.md" }
+
+[[stages]]
+id = "qa-ui"
+name = "QA Dashboard UI"
+type = "seq"
+team = "reviewers"
+depends_on = ["dashboard-ui"]
+input_from = ["dashboard-ui"]
+prompt = """
+Read ARCHITECTURE.md Section 7 for expected components.
+
+Verify the dashboard UI:
+1. Vite build compiles without errors
+2. All pages/components exist per spec
+3. RPC hooks are properly typed
+4. Tailwind classes are valid
+5. Dark theme is consistent
+6. No hardcoded data — all data comes through RPC
+
+Output JSON: { "verdict": "pass" or "fail", "issues": [...] }
+"""
+output = { format = "json", name = "qa-ui.json" }
+
+[[stages]]
+id = "fix-ui"
+name = "Fix UI Issues"
+type = "loop"
+team = "implementors"
+depends_on = ["qa-ui"]
+input_from = ["qa-ui"]
+prompt = "Fix all issues from QA report."
+max_loops = 2
+loop_to = "qa-ui"
+condition = "qa-ui.verdict != 'pass'"
+output = { format = "diff", name = "ui-fixes.diff" }
+
+# ─── Phase 4: Native Integration ───────────────────────
+
+[[stages]]
+id = "native"
+name = "Tray, Menu & Window Polish"
+type = "seq"
+team = "implementors"
+depends_on = ["fix-ui"]
+prompt = """
+Read ARCHITECTURE.md Section 11 (Main Process Behavior). Implement native desktop integration:
+
+1. System tray:
+   - Show app icon in tray
+   - Tray menu: quick stats (today's sessions/events), "Show Dashboard", "Rescan Sessions", "Quit"
+   - Clicking tray icon shows/hides main window
+
+2. Application menu:
+   - Standard Edit menu (undo, redo, cut, copy, paste, selectAll)
+   - File menu: "Rescan Sessions" action, "Quit"
+   - View menu: "Toggle Dark Mode"
+
+3. Window behavior:
+   - Close button minimizes to tray (on macOS)
+   - Proper quit via menu or tray
+
+Verify:
+- Main process starts without errors
+- Tray icon appears
+- Menu items are functional
+"""
+output = { format = "markdown", name = "native.md" }
+
+[[stages]]
+id = "qa-native"
+name = "QA Native Integration"
+type = "seq"
+team = "reviewers"
+depends_on = ["native"]
+input_from = ["native"]
+prompt = """
+Verify native integration:
+1. Tray icon creates without errors
+2. Application menu has all required items
+3. Menu actions are wired to handlers
+4. Window close behavior is correct
+5. Main process starts and creates window + tray
+
+Output JSON: { "verdict": "pass" or "fail", "issues": [...] }
+"""
+output = { format = "json", name = "qa-native.json" }
+
+[[stages]]
+id = "fix-native"
+name = "Fix Native Issues"
+type = "loop"
+team = "implementors"
+depends_on = ["qa-native"]
+input_from = ["qa-native"]
+prompt = "Fix all issues from QA report."
+max_loops = 2
+loop_to = "qa-native"
+condition = "qa-native.verdict != 'pass'"
+output = { format = "diff", name = "native-fixes.diff" }
+
+# ─── Phase 5: Final ────────────────────────────────────
+
+[[stages]]
+id = "commit"
+name = "Final Commit"
+type = "seq"
+team = "global"
+depends_on = ["fix-native"]
+prompt = """
+Review git diff. Stage all new/modified files. Commit with descriptive message:
+"feat: ai-stats — Electrobun desktop dashboard for AI agent session analytics"
+
+Do NOT push.
+"""
+tools = ["Read", "Glob", "Grep", "Bash"]
+output = { format = "markdown", name = "commit.md" }

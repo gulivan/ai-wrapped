@@ -1,0 +1,50 @@
+# ai-stats — AI analytics dashboard desktop app (Electrobun)
+
+[settings]
+default_team = "global"
+default_model = "claude-opus-4-6"
+bypass_permissions = true
+fail_fast = true
+retries = 1
+
+[settings.doctor]
+enabled = true
+agent = "doctor"
+
+# ─── Teams ──────────────────────────────────────────────
+
+[teams.global]
+description = "Single agent — general tasks"
+agents = ["claude-agent"]
+
+[teams.research]
+description = "Research & analysis"
+agents = ["planner-claude"]
+rules = "Analyze documentation, produce structured reference material. No code changes."
+
+[teams.planners]
+description = "Architecture & planning"
+agents = ["planner-claude"]
+rules = "Design architecture, produce implementation specs. No implementation."
+
+[teams.implementors]
+description = "Implementation team"
+agents = ["coder-codex"]
+
+[teams.reviewers]
+description = "QA & review"
+agents = ["reviewer-codex"]
+rules = "Review code, run tests, verify builds. Output structured QA verdicts."
+
+# ─── Agents ─────────────────────────────────────────────
+
+[agents.claude-agent]
+engine = "claude"
+model = "claude-opus-4-6"
+timeout = 600
+
+[agents.doctor]
+engine = "claude"
+model = "haiku"
+timeout = 30
+max_turns = 3

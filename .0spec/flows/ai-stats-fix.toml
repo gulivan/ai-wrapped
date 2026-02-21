@@ -1,0 +1,285 @@
+[flow]
+name = "ai-stats-fix"
+description = "Fix ai-stats: remove SQLite, simplify to JSON store, Spotify Wrapped-style dashboard"
+
+# ─── Phase 1: Rip out SQLite, replace with JSON file store ─────
+
+[[stages]]
+id = "json-store"
+name = "Replace SQLite with JSON File Store"
+type = "seq"
+team = "implementors"
+prompt = """
+The app currently uses SQLite (bun:sqlite) for all data storage. This causes crashes
+(UNIQUE constraint errors on events.id) and is overkill. Replace it entirely.
+
+**What to do:**
+
+1. Delete `src/bun/db.ts` entirely.
+
+2. Create `src/bun/store.ts` — a simple JSON file store:
+   - Data dir: `~/.ai-stats/` (create with mkdirSync recursive)
+   - Files:
+     - `~/.ai-stats/scan-state.json` — record of parsed files: `Record<filePath, { source, fileSize, mtimeMs, parsedAt }>`
+     - `~/.ai-stats/daily.json` — daily aggregates: `Record<date, { bySource: Record<source, DayStats>, byModel: Record<model, DayStats>, totals: DayStats }>`
+       where DayStats = `{ sessions, messages, toolCalls, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens, costUsd, durationMs }`
+     - `~/.ai-stats/settings.json` — app settings
+   - Read/write with Bun.file() / Bun.write() + JSON.parse/stringify
+   - No locking needed — single process app
+   - Load lazily on first access, cache in memory, flush on write
+
+3. Update `src/bun/scan.ts`:
+   - Remove all DB imports
+   - Use the new store for scan state checks (skip already-parsed files by path+mtime+size)
+   - After parsing sessions, aggregate into daily.json instead of SQLite
+   - Do NOT store individual sessions or events — only aggregate stats per day
+   - Each scan: discover files → parse → compute daily aggregates → merge into daily.json
+
+4. Update `src/bun/aggregator.ts`:
+   - Implement actual aggregation: take parsed sessions, group by date, accumulate stats
+   - Merge into existing daily.json (additive for new dates, replace for re-scanned dates)
+
+5. Update `src/bun/index.ts` (main process):
+   - Remove `import { openDatabase } from "./db"` and all `db.` calls
+   - Import from `./store` instead
+   - Update RPC handlers to read from JSON store
+
+6. Update `src/shared/types.ts` — simplify RPC:
+   - REMOVE these RPCs: getSessions, getSession, getSessionEvents, getDistinctModels, getDistinctRepos, getDbStats, vacuumDatabase
+   - KEEP these RPCs: getDashboardSummary, getDailyTimeline, triggerScan, getScanStatus, getTrayStats, getSettings, updateSettings
+   - getDashboardSummary reads from daily.json and computes totals
+   - getDailyTimeline reads date range from daily.json
+
+7. Update `src/shared/schema.ts`:
+   - Remove `Session`, `SessionEvent`, `SessionFilters`, `ScanState` interfaces (no longer exposed to frontend)
+   - Keep `TokenUsage`, `DashboardSummary`, `DailyAggregate`, `TrayStats`, `SessionSource`
+
+8. Remove `bun:sqlite` from any imports. Remove sqlite-related deps from package.json if any.
+
+**Verify:**
+- `bun install` succeeds
+- Vite build compiles without errors
+- No references to bun:sqlite remain
+- No references to db.ts remain
+"""
+output = { format = "markdown", name = "json-store.md" }
+
+[[stages]]
+id = "qa-store"
+name = "QA JSON Store"
+type = "seq"
+team = "reviewers"
+depends_on = ["json-store"]
+input_from = ["json-store"]
+prompt = """
+Verify the SQLite removal and JSON store replacement:
+
+1. `bun:sqlite` is not imported anywhere: `grep -r "bun:sqlite" src/`
+2. `db.ts` does not exist
+3. `src/bun/store.ts` exists and implements read/write for scan-state.json, daily.json, settings.json
+4. `src/bun/scan.ts` uses store, not db
+5. `src/bun/index.ts` uses store, not db
+6. RPC types in shared/types.ts have no session/event RPCs
+7. schema.ts has no Session/SessionEvent/SessionFilters interfaces
+8. Vite build compiles without errors
+9. TypeScript has no type errors (check with `bunx tsc --noEmit` or esbuild)
+
+Output JSON: { "verdict": "pass" or "fail", "issues": [...] }
+"""
+output = { format = "json", name = "qa-store.json" }
+
+[[stages]]
+id = "fix-store"
+name = "Fix Store Issues"
+type = "loop"
+team = "implementors"
+depends_on = ["qa-store"]
+input_from = ["qa-store"]
+prompt = "Fix all issues from QA report."
+max_loops = 2
+loop_to = "qa-store"
+condition = "qa-store.verdict != 'pass'"
+output = { format = "diff", name = "store-fixes.diff" }
+
+# ─── Phase 2: Spotify Wrapped-style UI ─────────────────────
+
+[[stages]]
+id = "wrapped-ui"
+name = "Spotify Wrapped Dashboard"
+type = "seq"
+team = "implementors"
+depends_on = ["fix-store"]
+prompt = """
+Transform the dashboard into a Spotify Wrapped-style visual experience. This should feel like
+an annual review / "Your Year in Code" summary — bold typography, gradient backgrounds,
+animated stat reveals, and visual flair.
+
+**Delete these files** (session detail features removed):
+- src/mainview/components/SessionDetail.tsx
+- src/mainview/components/SessionList.tsx
+- src/mainview/components/SessionListItem.tsx
+- src/mainview/components/EventTimeline.tsx
+- src/mainview/components/EventItem.tsx
+- src/mainview/components/FilterBar.tsx
+- src/mainview/components/SearchInput.tsx
+- src/mainview/hooks/useSessionDetail.ts
+- src/mainview/hooks/useSessions.ts
+- src/mainview/lib/filters.ts
+- All *.test.tsx files
+
+**Redesign App.tsx:**
+- Remove sidebar navigation — single-page "Wrapped" scroll experience
+- Remove "sessions" and "session-detail" views entirely
+- Keep a small gear icon for settings (modal overlay, not separate page)
+- Full-screen scrollable cards
+
+**Create new Wrapped-style Dashboard (replace existing Dashboard.tsx, DashboardCharts.tsx, StatsCards.tsx):**
+
+The dashboard is a vertical scroll of full-width "cards" — each card fills most of the viewport
+and showcases one stat category with bold visuals:
+
+Card 1: "Your AI Coding Year" hero
+  - Big animated counter: total sessions, total cost, total tokens
+  - Gradient background (dark purple → blue → teal)
+  - Date range shown subtly
+
+Card 2: "Time Spent Coding with AI"
+  - Total hours/days spent
+  - Average session duration
+  - Longest session highlight
+  - Animated circular progress ring
+
+Card 3: "Your Top Models"
+  - Ranked list of models by usage (tokens or cost)
+  - Horizontal bar chart with model colors
+  - Percentage breakdown
+
+Card 4: "Your Agents"
+  - Agent breakdown (Claude, Codex, Gemini, etc.)
+  - Each agent gets an icon/emoji and stats
+  - Donut chart showing distribution
+
+Card 5: "Daily Activity"
+  - Heatmap-style grid (like GitHub contribution graph) or area chart
+  - Shows daily token usage or session count over time
+
+Card 6: "Cost Breakdown"
+  - Total spend with big number
+  - Daily average
+  - Most expensive day
+  - Trend line
+
+Card 7: "Your Top Repos"
+  - List of repos by session count and cost
+  - Bar chart
+
+**Visual style:**
+- Dark theme default — deep navy/charcoal backgrounds
+- Each card has a subtle gradient or accent color
+- Use CSS animations for number counters (count up on scroll into view)
+- Large typography (3xl-6xl for hero numbers)
+- Rounded cards with glassmorphism borders (subtle white/10 border, backdrop-blur)
+- Recharts for data visualization where needed
+- Smooth scroll-snap between cards
+- Responsive — works on smaller windows too
+
+**Data source:**
+- All data comes from RPC `getDashboardSummary` and `getDailyTimeline`
+- No session-level data needed
+
+**Hooks:**
+- Keep `useDashboardData.ts` but simplify to only fetch summary + timeline
+- Remove session-related hooks
+- Update `useRPC.ts` to remove session RPCs
+
+**Update Sidebar.tsx:**
+- Remove it entirely or replace with a minimal floating nav
+- Just a small settings gear + app title
+
+**Verify:**
+- Vite build compiles
+- No imports of deleted files remain
+- No TypeScript errors
+"""
+output = { format = "markdown", name = "wrapped-ui.md" }
+
+[[stages]]
+id = "qa-wrapped"
+name = "QA Wrapped UI"
+type = "seq"
+team = "reviewers"
+depends_on = ["wrapped-ui"]
+input_from = ["wrapped-ui"]
+prompt = """
+Verify the Wrapped UI transformation:
+
+1. Deleted files are gone (SessionDetail, SessionList, EventTimeline, etc.)
+2. No imports of deleted files remain anywhere
+3. Sidebar is removed or minimal
+4. App.tsx has no "sessions" or "session-detail" views
+5. Dashboard renders a scroll of visual cards (check component structure)
+6. RPC calls are only getDashboardSummary and getDailyTimeline
+7. Vite build compiles
+8. TypeScript has no errors
+9. All Recharts imports are valid
+10. CSS uses dark theme with gradients
+
+Output JSON: { "verdict": "pass" or "fail", "issues": [...] }
+"""
+output = { format = "json", name = "qa-wrapped.json" }
+
+[[stages]]
+id = "fix-wrapped"
+name = "Fix Wrapped UI Issues"
+type = "loop"
+team = "implementors"
+depends_on = ["qa-wrapped"]
+input_from = ["qa-wrapped"]
+prompt = "Fix all issues from QA report."
+max_loops = 2
+loop_to = "qa-wrapped"
+condition = "qa-wrapped.verdict != 'pass'"
+output = { format = "diff", name = "wrapped-fixes.diff" }
+
+# ─── Phase 3: Integration test + commit ─────────────────────
+
+[[stages]]
+id = "integration"
+name = "Integration Smoke Test"
+type = "seq"
+team = "implementors"
+depends_on = ["fix-wrapped"]
+prompt = """
+Final integration check:
+
+1. Run `bun install` — must succeed
+2. Run Vite build — must succeed with no errors
+3. Run `bunx tsc --noEmit` or esbuild check — no type errors
+4. Verify no references to:
+   - bun:sqlite
+   - db.ts
+   - SessionDetail, SessionList, EventTimeline, EventItem
+   - querySessions, getSessionEvents, getSession
+5. Verify ~/.ai-stats/ directory structure works:
+   - The store module can create the directory
+   - Can write and read JSON files
+6. Fix any remaining issues.
+
+Report what you found and fixed.
+"""
+output = { format = "markdown", name = "integration.md" }
+
+[[stages]]
+id = "commit"
+name = "Final Commit"
+type = "seq"
+team = "global"
+depends_on = ["integration"]
+prompt = """
+Review git diff. Stage all new/modified files and deleted files. Commit with message:
+"refactor: remove SQLite, add JSON store, Spotify Wrapped-style dashboard"
+
+Do NOT push.
+"""
+tools = ["Read", "Glob", "Grep", "Bash"]
+output = { format = "markdown", name = "commit.md" }

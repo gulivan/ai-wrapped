@@ -1,0 +1,34 @@
+declare module "electrobun/view" {
+  import type { ElectrobunRPCSchema } from "electrobun/bun";
+
+  type RPCInstance<Schema extends ElectrobunRPCSchema> = {
+    request: {
+      [K in keyof Schema["bun"]["requests"]]: (
+        params: Schema["bun"]["requests"][K]["params"],
+      ) => Promise<Schema["bun"]["requests"][K]["response"]>;
+    };
+    send: {
+      [K in keyof Schema["bun"]["messages"]]: (
+        payload: Schema["bun"]["messages"][K],
+      ) => void;
+    };
+    addMessageListener: (
+      message: keyof Schema["webview"]["messages"] | "*",
+      listener: (...args: unknown[]) => void,
+    ) => void;
+    removeMessageListener: (
+      message: keyof Schema["webview"]["messages"] | "*",
+      listener: (...args: unknown[]) => void,
+    ) => void;
+  };
+
+  export class Electroview {
+    static defineRPC<Schema extends ElectrobunRPCSchema>(config: {
+      handlers: {
+        requests?: Record<string, (params: unknown) => unknown>;
+        messages?: Record<string, (payload: unknown) => void>;
+      };
+      maxRequestTime?: number;
+    }): RPCInstance<Schema>;
+  }
+}
