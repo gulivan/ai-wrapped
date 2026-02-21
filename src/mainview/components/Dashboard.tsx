@@ -1,37 +1,22 @@
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { SESSION_SOURCES, type SessionSource } from "@shared/schema";
 import DashboardCharts from "./DashboardCharts";
 import EmptyState from "./EmptyState";
 import Sidebar from "./Sidebar";
 import StatsCards, { AnimatedNumber } from "./StatsCards";
 import { useDashboardData, type DashboardDateRange } from "../hooks/useDashboardData";
+import { SOURCE_LABELS } from "../lib/constants";
 import { formatDate, formatDuration, formatNumber } from "../lib/formatters";
 
-const useInView = <T extends HTMLElement>(threshold = 0.35) => {
-  const ref = useRef<T | null>(null);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    const node = ref.current;
-    if (!node || visible) return;
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setVisible(true);
-          observer.disconnect();
-        }
-      },
-      { threshold },
-    );
-
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [threshold, visible]);
-
-  return { ref, visible };
-};
-
 const clampPercentage = (value: number): number => Math.max(0, Math.min(100, value));
+type CostAgentFilter = "all" | SessionSource;
+type CostGroupBy = "none" | "by-agent" | "by-model";
+
+const isCostGroupBy = (value: string): value is CostGroupBy =>
+  value === "none" || value === "by-agent" || value === "by-model";
+
+const isCostAgentFilter = (value: string): value is CostAgentFilter =>
+  value === "all" || SESSION_SOURCES.includes(value as SessionSource);
 
 const Dashboard = () => {
   const {
@@ -51,7 +36,13 @@ const Dashboard = () => {
     rangeOptions,
     dailyAgentTokensByDate,
     dailyAgentCostsByDate,
+    dailyModelCostsByDate,
   } = useDashboardData();
+  const [costAgentFilter, setCostAgentFilter] = useState<CostAgentFilter>("all");
+  const [costGroupBy, setCostGroupBy] = useState<CostGroupBy>("none");
+  const [activeCardIndex, setActiveCardIndex] = useState<number>(1);
+  const activeCardRef = useRef<number>(1);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const handleRangeChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const next = event.target.value as DashboardDateRange;
@@ -59,11 +50,87 @@ const Dashboard = () => {
     setSelectedRange(next);
   };
 
+  const costAgentOptions = useMemo<Array<{ value: CostAgentFilter; label: string }>>(
+    () => [
+      { value: "all", label: "All" },
+      ...SESSION_SOURCES.map((source) => ({ value: source, label: SOURCE_LABELS[source] })),
+    ],
+    [],
+  );
+
+  const costGroupOptions = useMemo<Array<{ value: CostGroupBy; label: string }>>(
+    () => [
+      { value: "none", label: "None" },
+      { value: "by-agent", label: "By agent" },
+      { value: "by-model", label: "By model" },
+    ],
+    [],
+  );
+
+  const handleCostAgentChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const next = event.target.value;
+    if (!isCostAgentFilter(next)) return;
+    setCostAgentFilter(next);
+  };
+
+  const handleCostGroupByChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const next = event.target.value;
+    if (!isCostGroupBy(next)) return;
+    setCostGroupBy(next);
+    if (next === "by-model") {
+      setCostAgentFilter("all");
+    }
+  };
+
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root) return;
+
+    const cards = Array.from(root.querySelectorAll<HTMLElement>("[data-card-index]"));
+    if (cards.length === 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const next = entries
+          .filter((entry) => entry.isIntersecting)
+          .map((entry) => ({
+            index: Number((entry.target as HTMLElement).dataset.cardIndex ?? 0),
+            ratio: entry.intersectionRatio,
+          }))
+          .filter((entry) => entry.index > 0)
+          .sort((left, right) => right.ratio - left.ratio)[0];
+
+        if (!next || next.index === activeCardRef.current) return;
+
+        activeCardRef.current = next.index;
+        setActiveCardIndex(next.index);
+      },
+      {
+        root,
+        threshold: [0.25, 0.45, 0.65, 0.85],
+      },
+    );
+
+    for (const card of cards) {
+      observer.observe(card);
+    }
+
+    return () => observer.disconnect();
+  }, [summary, error]);
+
   const sidebar = (
     <Sidebar
       selectedRange={selectedRange}
       rangeOptions={rangeOptions}
       onRangeChange={handleRangeChange}
+      showCostControls={activeCardIndex === 6}
+      costAgentFilter={costAgentFilter}
+      onCostAgentChange={handleCostAgentChange}
+      costAgentOptions={costAgentOptions}
+      costGroupBy={costGroupBy}
+      onCostGroupByChange={handleCostGroupByChange}
+      costGroupOptions={costGroupOptions}
+      costAgentDisabled={costGroupBy === "by-model"}
     />
   );
 
@@ -71,8 +138,8 @@ const Dashboard = () => {
     return (
       <>
         {sidebar}
-        <div className="wrapped-scroll">
-          <section className="wrapped-card wrapped-card-loading">
+        <div ref={scrollRef} className="wrapped-scroll">
+          <section data-card-index="1" className="wrapped-card wrapped-card-loading">
             <EmptyState title="Building your coding story" description="Loading annual summary and timeline." />
           </section>
         </div>
@@ -84,8 +151,8 @@ const Dashboard = () => {
     return (
       <>
         {sidebar}
-        <div className="wrapped-scroll">
-          <section className="wrapped-card wrapped-card-loading">
+        <div ref={scrollRef} className="wrapped-scroll">
+          <section data-card-index="1" className="wrapped-card wrapped-card-loading">
             <EmptyState title="Unable to build wrapped view" description={error} />
             <button type="button" onClick={() => void refresh()} className="wrapped-button mt-4">
               Retry
@@ -103,16 +170,47 @@ const Dashboard = () => {
   const ringRadius = 58;
   const ringCircumference = 2 * Math.PI * ringRadius;
   const ringOffset = ringCircumference - (activeDayCoverage / 100) * ringCircumference;
+  const heroCopy = useMemo<{ kicker: string; title: string }>(() => {
+    if (selectedRange === "last7") {
+      return { kicker: "Your Last 7 Days In Code", title: "Your AI Coding Week" };
+    }
+
+    if (selectedRange === "last30") {
+      return { kicker: "Your Last 30 Days In Code", title: "Your AI Coding Month" };
+    }
+
+    if (selectedRange === "last90") {
+      return { kicker: "Your Last 90 Days In Code", title: "Your AI Coding Quarter" };
+    }
+
+    if (selectedRange === "last365") {
+      return { kicker: "Your Last 365 Days In Code", title: "Your AI Coding Year" };
+    }
+
+    if (selectedRange.startsWith("year:")) {
+      const year = Number(selectedRange.slice(5));
+      if (Number.isInteger(year)) {
+        const currentYear = new Date().getFullYear();
+        if (year === currentYear) {
+          return { kicker: "This Year In Code", title: "Your AI Coding Year" };
+        }
+
+        return { kicker: `${year} In Code`, title: `Your AI Coding ${year}` };
+      }
+    }
+
+    return { kicker: "Your Time In Code", title: "Your AI Coding Story" };
+  }, [selectedRange]);
 
   return (
     <>
       {sidebar}
-      <div className="wrapped-scroll">
+      <div ref={scrollRef} className="wrapped-scroll">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pb-12 sm:px-6">
-          <section className="wrapped-card wrapped-card-hero">
+          <section data-card-index="1" className="wrapped-card wrapped-card-hero">
             <header className="mb-6">
-              <p className="wrapped-kicker">Your Year In Code</p>
-              <h1 className="text-4xl font-semibold tracking-[-0.03em] text-white sm:text-6xl">Your AI Coding Year</h1>
+              <p className="wrapped-kicker">{heroCopy.kicker}</p>
+              <h1 className="text-4xl font-semibold tracking-[-0.03em] text-white sm:text-6xl">{heroCopy.title}</h1>
               <p className="mt-3 text-sm text-slate-200/90">
                 {formatDate(dateFrom)} - {formatDate(dateTo)}
               </p>
@@ -126,7 +224,7 @@ const Dashboard = () => {
             />
           </section>
 
-          <section className="wrapped-card wrapped-card-time">
+          <section data-card-index="2" className="wrapped-card wrapped-card-time">
             <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
               <div>
                 <p className="wrapped-kicker">Card 2</p>
@@ -163,11 +261,15 @@ const Dashboard = () => {
                 </article>
 
                 <article className="wrapped-tile sm:col-span-2">
-                  <p className="wrapped-label">Current Streak</p>
+                  <p className="wrapped-label">Current Streak 🔥</p>
                   <p className="mt-2 text-3xl font-semibold text-white">
                     {formatNumber(totals.currentStreakDays)} {totals.currentStreakDays === 1 ? "day" : "days"}
                   </p>
-                  <p className="mt-2 text-xs text-slate-300">Consecutive active days ending {formatDate(dateTo)}</p>
+                  <p className="mt-2 text-xs text-slate-300">
+                    {totals.currentStreakStartDate
+                      ? `Started ${formatDate(totals.currentStreakStartDate)}`
+                      : "No active streak in this range"}
+                  </p>
                 </article>
               </div>
 
@@ -224,10 +326,13 @@ const Dashboard = () => {
             timeline={timeline}
             dailyAgentTokensByDate={dailyAgentTokensByDate}
             dailyAgentCostsByDate={dailyAgentCostsByDate}
+            dailyModelCostsByDate={dailyModelCostsByDate}
             topRepos={topRepos}
             totalCostUsd={totals.totalCostUsd}
             dailyAverageCostUsd={totals.dailyAverageCostUsd}
             mostExpensiveDay={totals.mostExpensiveDay}
+            costAgentFilter={costAgentFilter}
+            costGroupBy={costGroupBy}
           />
         </div>
       </div>

@@ -16,7 +16,7 @@ export type AIStatsRPC = {
         response: DashboardSummary;
       };
       getDailyTimeline: {
-        params: { dateFrom: string; dateTo: string; source?: SessionSource };
+        params: { dateFrom: string; dateTo: string; source?: SessionSource; model?: string };
         response: DailyAggregate[];
       };
       triggerScan: {

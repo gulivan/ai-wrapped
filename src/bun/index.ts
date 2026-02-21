@@ -80,6 +80,7 @@ const getDailyTimelineFromStore = async (
   dateFrom: string,
   dateTo: string,
   source?: SessionSource,
+  model?: string,
 ): Promise<DailyAggregate[]> => {
   const daily = await readDailyStore();
   const dates = Object.keys(daily).sort((a, b) => a.localeCompare(b));
@@ -90,13 +91,18 @@ const getDailyTimelineFromStore = async (
       const entry = daily[date];
       if (!entry) return null;
 
-      const stats = source ? entry.bySource[source] : entry.totals;
+      const stats =
+        source
+          ? entry.bySource[source]
+          : model
+            ? entry.byModel[model]
+            : entry.totals;
       if (!stats) return null;
 
       return {
         date,
         source: source ?? "all",
-        model: "all",
+        model: model ?? "all",
         sessionCount: stats.sessions,
         messageCount: stats.messages,
         toolCallCount: stats.toolCalls,
@@ -701,7 +707,8 @@ const rpc = BrowserView.defineRPC<AIStatsRPC>({
   handlers: {
     requests: {
       getDashboardSummary: ({ dateFrom, dateTo }) => getDashboardSummaryFromStore(dateFrom, dateTo),
-      getDailyTimeline: ({ dateFrom, dateTo, source }) => getDailyTimelineFromStore(dateFrom, dateTo, source),
+      getDailyTimeline: ({ dateFrom, dateTo, source, model }) =>
+        getDailyTimelineFromStore(dateFrom, dateTo, source, model),
       triggerScan: async ({ fullScan }) => {
         const result = await runScanWithNotifications(Boolean(fullScan));
         return { scanned: result.scanned, total: result.total };

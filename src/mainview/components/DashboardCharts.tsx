@@ -1,4 +1,4 @@
-import { useMemo, useState, type ChangeEvent, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { SESSION_SOURCES, type SessionSource } from "@shared/schema";
 import {
   Area,
@@ -19,10 +19,14 @@ import { SOURCE_COLORS, SOURCE_LABELS } from "../lib/constants";
 import type {
   AgentBreakdown,
   DailyAgentCostsByDate,
+  DailyModelCostsByDate,
   DailyAgentTokensByDate,
   ModelBreakdown,
   TimelinePoint,
 } from "../hooks/useDashboardData";
+
+type CostSourceFilter = "all" | SessionSource;
+type CostGroupBy = "none" | "by-agent" | "by-model";
 
 interface DashboardChartsProps {
   dateFrom: string;
@@ -32,10 +36,13 @@ interface DashboardChartsProps {
   timeline: TimelinePoint[];
   dailyAgentTokensByDate: DailyAgentTokensByDate;
   dailyAgentCostsByDate: DailyAgentCostsByDate;
+  dailyModelCostsByDate: DailyModelCostsByDate;
   topRepos: Array<{ repo: string; sessions: number; costUsd: number }>;
   totalCostUsd: number;
   dailyAverageCostUsd: number;
   mostExpensiveDay: TimelinePoint | null;
+  costAgentFilter: CostSourceFilter;
+  costGroupBy: CostGroupBy;
 }
 
 interface HeatmapCell {
@@ -47,6 +54,7 @@ interface HeatmapCell {
 }
 
 type HeatmapWeek = Array<HeatmapCell | null>;
+type CostSeriesPoint = { date: string } & Record<string, string | number>;
 
 const MODEL_COLORS = ["#22d3ee", "#3b82f6", "#14b8a6", "#0ea5e9", "#06b6d4", "#38bdf8", "#34d399", "#67e8f9"];
 
@@ -133,11 +141,6 @@ const formatNumberTooltip = (value: number | string | undefined) =>
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-type CostSourceFilter = "all" | SessionSource;
-
-const isCostSourceFilter = (value: string): value is CostSourceFilter =>
-  value === "all" || SESSION_SOURCES.includes(value as SessionSource);
-
 const rangeLengthDays = (dateFrom: string, dateTo: string): number => {
   const from = Date.parse(`${dateFrom}T00:00:00Z`);
   const to = Date.parse(`${dateTo}T00:00:00Z`);
@@ -175,13 +178,14 @@ const DashboardCharts = ({
   timeline,
   dailyAgentTokensByDate,
   dailyAgentCostsByDate,
+  dailyModelCostsByDate,
   topRepos,
   totalCostUsd,
   dailyAverageCostUsd,
   mostExpensiveDay,
+  costAgentFilter,
+  costGroupBy,
 }: DashboardChartsProps) => {
-  const [selectedCostSource, setSelectedCostSource] = useState<CostSourceFilter>("all");
-
   const totalModelTokens = modelBreakdown.reduce((sum, row) => sum + row.tokens, 0);
   const modelRows = modelBreakdown.map((row, index) => ({
     ...row,
@@ -227,34 +231,29 @@ const DashboardCharts = ({
   const heatmapWeeks = buildHeatmapWeeks(heatmap);
   const dateSpanDays = rangeLengthDays(dateFrom, dateTo);
 
-  const costFilterOptions: Array<{ value: CostSourceFilter; label: string }> = [
-    { value: "all", label: "All" },
-    ...SESSION_SOURCES.map((source) => ({ value: source, label: SOURCE_LABELS[source] })),
-  ];
-
   const costTimeline = useMemo<TimelinePoint[]>(() => {
-    if (selectedCostSource === "all") return timeline;
+    if (costAgentFilter === "all") return timeline;
 
     return timeline.map((point) => ({
       ...point,
-      costUsd: dailyAgentCostsByDate[point.date]?.[selectedCostSource] ?? 0,
+      costUsd: dailyAgentCostsByDate[point.date]?.[costAgentFilter] ?? 0,
     }));
-  }, [dailyAgentCostsByDate, selectedCostSource, timeline]);
+  }, [costAgentFilter, dailyAgentCostsByDate, timeline]);
 
   const selectedTotalCostUsd =
-    selectedCostSource === "all"
+    costAgentFilter === "all"
       ? totalCostUsd
       : costTimeline.reduce((sum, point) => sum + point.costUsd, 0);
 
   const selectedDailyAverageCostUsd =
-    selectedCostSource === "all"
+    costAgentFilter === "all"
       ? dailyAverageCostUsd
       : dateSpanDays > 0
         ? selectedTotalCostUsd / dateSpanDays
         : 0;
 
   const selectedMostExpensiveDay =
-    selectedCostSource === "all"
+    costAgentFilter === "all"
       ? mostExpensiveDay
       : (() => {
           const daysWithSpend = costTimeline.filter((point) => point.costUsd > 0);
@@ -262,15 +261,85 @@ const DashboardCharts = ({
           return daysWithSpend.reduce((max, point) => (point.costUsd > max.costUsd ? point : max), daysWithSpend[0]);
         })();
 
-  const handleCostSourceChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const next = event.target.value;
-    if (!isCostSourceFilter(next)) return;
-    setSelectedCostSource(next);
-  };
+  const groupedAgentSeries = useMemo<Array<{ key: string; label: string; color: string }>>(
+    () => {
+      const sources = costAgentFilter === "all" ? SESSION_SOURCES : [costAgentFilter];
+      return sources.map((source) => ({
+        key: source,
+        label: SOURCE_LABELS[source],
+        color: SOURCE_COLORS[source] ?? "#94a3b8",
+      }));
+    },
+    [costAgentFilter],
+  );
+
+  const groupedAgentTimeline = useMemo<CostSeriesPoint[]>(
+    () =>
+      timeline.map((point) => {
+        const row: CostSeriesPoint = { date: point.date };
+        const bySource = dailyAgentCostsByDate[point.date] ?? {};
+        const sources = costAgentFilter === "all" ? SESSION_SOURCES : [costAgentFilter];
+
+        for (const source of sources) {
+          row[source] = bySource[source] ?? 0;
+        }
+
+        return row;
+      }),
+    [costAgentFilter, dailyAgentCostsByDate, timeline],
+  );
+
+  const groupedModelSeries = useMemo<Array<{ key: string; label: string; color: string }>>(() => {
+    const sorted = [...modelBreakdown].sort((left, right) => right.costUsd - left.costUsd);
+    const topSeries = sorted.slice(0, 6).map((row, index) => ({
+      key: row.model,
+      label: row.model,
+      color: MODEL_COLORS[index % MODEL_COLORS.length],
+    }));
+
+    if (sorted.length <= 6) return topSeries;
+
+    return [
+      ...topSeries,
+      {
+        key: "Others",
+        label: "Others",
+        color: "#94a3b8",
+      },
+    ];
+  }, [modelBreakdown]);
+
+  const groupedModelTimeline = useMemo<CostSeriesPoint[]>(
+    () =>
+      timeline.map((point) => {
+        const row: CostSeriesPoint = { date: point.date };
+        const byModel = dailyModelCostsByDate[point.date] ?? {};
+        let topModelCostTotal = 0;
+
+        for (const series of groupedModelSeries) {
+          if (series.key === "Others") continue;
+          const costValue = byModel[series.key] ?? 0;
+          row[series.key] = costValue;
+          topModelCostTotal += costValue;
+        }
+
+        if (groupedModelSeries.some((series) => series.key === "Others")) {
+          row.Others = Math.max(0, point.costUsd - topModelCostTotal);
+        }
+
+        return row;
+      }),
+    [dailyModelCostsByDate, groupedModelSeries, timeline],
+  );
+
+  const effectiveCostGroupBy =
+    costGroupBy === "by-model" && groupedModelSeries.length === 0 ? "none" : costGroupBy;
+  const groupedCostSeries = effectiveCostGroupBy === "by-agent" ? groupedAgentSeries : groupedModelSeries;
+  const groupedCostTimeline = effectiveCostGroupBy === "by-agent" ? groupedAgentTimeline : groupedModelTimeline;
 
   return (
     <>
-      <section className="wrapped-card wrapped-card-models">
+      <section data-card-index="3" className="wrapped-card wrapped-card-models">
         <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="wrapped-kicker">Card 3</p>
@@ -339,7 +408,7 @@ const DashboardCharts = ({
         )}
       </section>
 
-      <section className="wrapped-card wrapped-card-agents">
+      <section data-card-index="4" className="wrapped-card wrapped-card-agents">
         <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="wrapped-kicker">Card 4</p>
@@ -395,7 +464,7 @@ const DashboardCharts = ({
         )}
       </section>
 
-      <section className="wrapped-card wrapped-card-activity">
+      <section data-card-index="5" className="wrapped-card wrapped-card-activity">
         <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="wrapped-kicker">Card 5</p>
@@ -444,27 +513,12 @@ const DashboardCharts = ({
         )}
       </section>
 
-      <section className="wrapped-card wrapped-card-cost">
+      <section data-card-index="6" className="wrapped-card wrapped-card-cost">
         <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="wrapped-kicker">Card 6</p>
             <h2 className="wrapped-title">Cost Breakdown</h2>
           </div>
-          <label className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-slate-300">
-            Agent
-            <select
-              value={selectedCostSource}
-              onChange={handleCostSourceChange}
-              aria-label="Cost breakdown agent filter"
-              className="min-w-36 rounded-lg border border-white/20 bg-slate-950/65 px-3 py-2 text-sm font-medium normal-case tracking-normal text-slate-100 outline-none transition focus:border-sky-300"
-            >
-              {costFilterOptions.map((option) => (
-                <option key={option.value} value={option.value} className="bg-slate-950 text-slate-100">
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
         </header>
 
         <div className="grid gap-4 md:grid-cols-3">
@@ -488,33 +542,68 @@ const DashboardCharts = ({
         </div>
 
         <div className="mt-6 h-56 sm:h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={costTimeline}>
-              <defs>
-                <linearGradient id="costFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.55} />
-                  <stop offset="100%" stopColor="#38bdf8" stopOpacity={0.08} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke="rgba(148,163,184,0.2)" strokeDasharray="2 5" />
-              <XAxis dataKey="date" tick={{ fill: "#cbd5e1", fontSize: 11 }} tickLine={false} axisLine={false} />
-              <YAxis tick={{ fill: "#cbd5e1", fontSize: 11 }} tickLine={false} axisLine={false} />
-              <Tooltip
-                contentStyle={{
-                  background: "rgba(2,6,23,0.95)",
-                  border: "1px solid rgba(148,163,184,0.35)",
-                  borderRadius: "12px",
-                }}
-                formatter={formatUsdTooltip}
-                labelFormatter={(value) => formatDate(String(value))}
-              />
-              <Area type="monotone" dataKey="costUsd" stroke="#38bdf8" fill="url(#costFill)" strokeWidth={2.5} />
-            </AreaChart>
-          </ResponsiveContainer>
+          {effectiveCostGroupBy === "none" ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={costTimeline}>
+                <defs>
+                  <linearGradient id="costFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.55} />
+                    <stop offset="100%" stopColor="#38bdf8" stopOpacity={0.08} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="rgba(148,163,184,0.2)" strokeDasharray="2 5" />
+                <XAxis dataKey="date" tick={{ fill: "#cbd5e1", fontSize: 11 }} tickLine={false} axisLine={false} />
+                <YAxis tick={{ fill: "#cbd5e1", fontSize: 11 }} tickLine={false} axisLine={false} />
+                <Tooltip
+                  contentStyle={{
+                    background: "rgba(2,6,23,0.95)",
+                    border: "1px solid rgba(148,163,184,0.35)",
+                    borderRadius: "12px",
+                  }}
+                  formatter={formatUsdTooltip}
+                  labelFormatter={(value) => formatDate(String(value))}
+                />
+                <Area type="monotone" dataKey="costUsd" name="Cost" stroke="#38bdf8" fill="url(#costFill)" strokeWidth={2.5} />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={groupedCostTimeline}>
+                <CartesianGrid stroke="rgba(148,163,184,0.2)" strokeDasharray="2 5" />
+                <XAxis dataKey="date" tick={{ fill: "#cbd5e1", fontSize: 11 }} tickLine={false} axisLine={false} />
+                <YAxis tick={{ fill: "#cbd5e1", fontSize: 11 }} tickLine={false} axisLine={false} />
+                <Tooltip
+                  contentStyle={{
+                    background: "rgba(2,6,23,0.95)",
+                    border: "1px solid rgba(148,163,184,0.35)",
+                    borderRadius: "12px",
+                  }}
+                  formatter={(value: number | string | undefined, name?: string) => [
+                    formatUsd(typeof value === "number" ? value : Number(value ?? 0)),
+                    name ?? "Cost",
+                  ]}
+                  labelFormatter={(value) => formatDate(String(value))}
+                />
+                {groupedCostSeries.map((series) => (
+                  <Area
+                    key={series.key}
+                    type="monotone"
+                    dataKey={series.key}
+                    name={series.label}
+                    stackId="cost"
+                    stroke={series.color}
+                    fill={series.color}
+                    fillOpacity={0.22}
+                    strokeWidth={2}
+                  />
+                ))}
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </section>
 
-      <section className="wrapped-card wrapped-card-repos">
+      <section data-card-index="7" className="wrapped-card wrapped-card-repos">
         <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="wrapped-kicker">Card 7</p>
