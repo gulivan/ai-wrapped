@@ -35,6 +35,10 @@ export type AIStatsRPC = {
         params: {};
         response: AppSettings;
       };
+      exportFullSharePdf: {
+        params: { url: string };
+        response: { path: string; browser: string };
+      };
       updateSettings: {
         params: Partial<AppSettings>;
         response: boolean;

@@ -208,6 +208,14 @@ const Dashboard = () => {
           return;
         }
 
+        if (action === "download-full-pdf") {
+          const exported = await rpc.request.exportFullSharePdf({
+            url: buildFullShareUrl(payload),
+          });
+          window.alert(`PDF saved to ${exported.path}\nRendered with ${exported.browser}.`);
+          return;
+        }
+
         if (action === "open-summary-share") {
           const summaryEncoded = encodeShareSummaryData(toShareSummaryPayload(payload));
           if (!summaryEncoded || summaryEncoded.length > MAX_SHARE_HASH_LENGTH) {

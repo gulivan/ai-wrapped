@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Electrobun, {
   ApplicationMenu,
@@ -35,6 +37,9 @@ import { getOpenExternalCommand, tryResolveAllowedExternalUrl } from "./external
 
 const isMac = process.platform === "darwin";
 const CUSTOM_MENU_ENABLED = Bun.env.AI_WRAPPED_CUSTOM_MENU !== "0";
+const SHARE_PDF_FILENAME_PREFIX = "ai-wrapped-full";
+const SHARE_PDF_RENDER_TIMEOUT_MS = 60_000;
+const SHARE_PDF_VIRTUAL_TIME_BUDGET_MS = 15_000;
 
 let isScanning = false;
 let isQuitting = false;
@@ -340,6 +345,259 @@ const resolveTrayIconPath = (): string => {
   }
 
   return "";
+};
+
+interface HeadlessBrowserCandidate {
+  label: string;
+  command: string;
+}
+
+const isAbsoluteCommandPath = (command: string): boolean =>
+  command.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(command);
+
+const resolveHeadlessBrowserCandidates = (): HeadlessBrowserCandidate[] => {
+  if (process.platform === "darwin") {
+    return [
+      {
+        label: "Google Chrome",
+        command: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      },
+      {
+        label: "Chromium",
+        command: "/Applications/Chromium.app/Contents/MacOS/Chromium",
+      },
+      {
+        label: "Microsoft Edge",
+        command: "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+      },
+      {
+        label: "Brave Browser",
+        command: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+      },
+    ];
+  }
+
+  if (process.platform === "win32") {
+    const programFiles = process.env.PROGRAMFILES ?? "C:\\Program Files";
+    const programFilesX86 = process.env["PROGRAMFILES(X86)"] ?? "C:\\Program Files (x86)";
+    const localAppData = process.env.LOCALAPPDATA ?? "";
+
+    return [
+      {
+        label: "Google Chrome",
+        command: join(programFiles, "Google", "Chrome", "Application", "chrome.exe"),
+      },
+      {
+        label: "Google Chrome (x86)",
+        command: join(programFilesX86, "Google", "Chrome", "Application", "chrome.exe"),
+      },
+      {
+        label: "Chromium",
+        command: join(localAppData, "Chromium", "Application", "chrome.exe"),
+      },
+      {
+        label: "Microsoft Edge",
+        command: join(programFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
+      },
+      {
+        label: "Microsoft Edge (x86)",
+        command: join(programFilesX86, "Microsoft", "Edge", "Application", "msedge.exe"),
+      },
+      {
+        label: "Brave Browser",
+        command: join(programFiles, "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+      },
+    ];
+  }
+
+  return [
+    { label: "Google Chrome", command: "google-chrome-stable" },
+    { label: "Google Chrome", command: "google-chrome" },
+    { label: "Chromium", command: "chromium-browser" },
+    { label: "Chromium", command: "chromium" },
+    { label: "Microsoft Edge", command: "microsoft-edge" },
+    { label: "Brave Browser", command: "brave-browser" },
+  ];
+};
+
+const buildSharePdfOutputPath = async (): Promise<string> => {
+  const downloadsDir = join(homedir(), "Downloads");
+  await mkdir(downloadsDir, { recursive: true });
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+  for (let index = 0; index < 200; index += 1) {
+    const suffix = index === 0 ? "" : `-${index + 1}`;
+    const filename = `${SHARE_PDF_FILENAME_PREFIX}-${timestamp}${suffix}.pdf`;
+    const candidatePath = join(downloadsDir, filename);
+    if (!existsSync(candidatePath)) {
+      return candidatePath;
+    }
+  }
+
+  throw new Error("Failed to allocate a PDF filename in Downloads.");
+};
+
+const readStderr = async (stream: ReadableStream<Uint8Array> | null): Promise<string> => {
+  if (!stream) return "";
+
+  try {
+    const text = await new Response(stream).text();
+    return text.trim();
+  } catch {
+    return "";
+  }
+};
+
+const tryRenderSharePdfWithBrowser = async (
+  candidate: HeadlessBrowserCandidate,
+  outputPath: string,
+  shareUrl: string,
+  userDataDir: string,
+): Promise<{ ok: true } | { ok: false; reason: string }> => {
+  const args = [
+    "--headless",
+    "--disable-gpu",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--hide-scrollbars",
+    "--run-all-compositor-stages-before-draw",
+    `--user-data-dir=${userDataDir}`,
+    `--virtual-time-budget=${SHARE_PDF_VIRTUAL_TIME_BUDGET_MS}`,
+    "--print-to-pdf-no-header",
+    `--print-to-pdf=${outputPath}`,
+    shareUrl,
+  ];
+
+  if (process.platform === "linux") {
+    args.splice(2, 0, "--no-sandbox");
+  }
+
+  let processRef: Bun.Subprocess<"ignore", "ignore", "pipe">;
+  try {
+    processRef = Bun.spawn([candidate.command, ...args], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, reason: message };
+  }
+
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    try {
+      processRef.kill();
+    } catch {
+      // Ignore kill failures after timeout.
+    }
+  }, SHARE_PDF_RENDER_TIMEOUT_MS);
+
+  const [exitCode, stderrText] = await Promise.all([
+    processRef.exited,
+    readStderr(processRef.stderr),
+  ]);
+  clearTimeout(timeoutId);
+
+  if (timedOut) {
+    return { ok: false, reason: "Timed out while rendering PDF." };
+  }
+
+  if (exitCode !== 0) {
+    return {
+      ok: false,
+      reason:
+        stderrText.length > 0
+          ? `Exited with code ${exitCode}: ${stderrText}`
+          : `Exited with code ${exitCode}.`,
+    };
+  }
+
+  if (!existsSync(outputPath)) {
+    return { ok: false, reason: "Browser exited successfully but no PDF file was created." };
+  }
+
+  try {
+    const outputStat = await stat(outputPath);
+    if (!outputStat.isFile() || outputStat.size <= 0) {
+      return { ok: false, reason: "Generated PDF file is empty." };
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, reason: message };
+  }
+
+  return { ok: true };
+};
+
+const exportFullSharePdf = async (
+  url: string,
+): Promise<{ path: string; browser: string }> => {
+  const resolvedUrl = tryResolveAllowedExternalUrl(url);
+  if (!resolvedUrl || !resolvedUrl.startsWith("http")) {
+    throw new Error("Rejected PDF export for invalid share URL.");
+  }
+
+  const parsed = new URL(resolvedUrl);
+  const isSharePath = parsed.pathname === "/share" || parsed.pathname === "/share/";
+  if (!isSharePath) {
+    throw new Error("PDF export only supports ai-wrapped.com/share URLs.");
+  }
+
+  const outputPath = await buildSharePdfOutputPath();
+  const candidates = resolveHeadlessBrowserCandidates().filter((candidate) => {
+    if (!isAbsoluteCommandPath(candidate.command)) return true;
+    return existsSync(candidate.command);
+  });
+
+  if (candidates.length === 0) {
+    throw new Error(
+      "No supported browser found for automatic PDF export. Install Chrome, Chromium, Edge, or Brave.",
+    );
+  }
+
+  let lastFailure = "";
+  const userDataDir = await mkdtemp(join(tmpdir(), "ai-wrapped-pdf-"));
+
+  try {
+    for (const candidate of candidates) {
+      try {
+        await rm(outputPath, { force: true });
+      } catch {
+        // Ignore cleanup errors between attempts.
+      }
+
+      const attempt = await tryRenderSharePdfWithBrowser(
+        candidate,
+        outputPath,
+        resolvedUrl,
+        userDataDir,
+      );
+
+      if (attempt.ok) {
+        return {
+          path: outputPath,
+          browser: candidate.label,
+        };
+      }
+
+      lastFailure = `${candidate.label}: ${attempt.reason}`;
+    }
+  } finally {
+    try {
+      await rm(userDataDir, { recursive: true, force: true });
+    } catch {
+      // Ignore temp cleanup failures.
+    }
+  }
+
+  if (lastFailure.length > 0) {
+    throw new Error(`Automatic PDF export failed. ${lastFailure}`);
+  }
+
+  throw new Error("Automatic PDF export failed.");
 };
 
 const updateSettings = async (patch: Partial<AppSettings>): Promise<AppSettings> => {
@@ -775,6 +1033,14 @@ const rpc = BrowserView.defineRPC<AIStatsRPC>({
       }),
       getTrayStats: () => getTrayStatsFromStore(),
       getSettings: () => getSettings(),
+      exportFullSharePdf: async ({ url }) => {
+        const resolved = tryResolveAllowedExternalUrl(url);
+        if (!resolved) {
+          throw new Error("Rejected PDF export for invalid URL.");
+        }
+
+        return exportFullSharePdf(resolved);
+      },
       updateSettings: async (patch) => {
         const next = await updateSettings(patch);
         configureBackgroundScan(next.scanIntervalMinutes);

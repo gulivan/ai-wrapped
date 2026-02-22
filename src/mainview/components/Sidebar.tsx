@@ -3,6 +3,7 @@ import { useRPC } from "../hooks/useRPC";
 
 export type ShareMenuAction =
   | "download-image"
+  | "download-full-pdf"
   | "open-summary-share"
   | "open-full-share"
   | "open-full-share-no-repos";
@@ -62,6 +63,11 @@ const Sidebar = ({
         action: "download-image",
         label: "Save summary image to ~/Downloads",
         description: "Instant PNG export to Downloads",
+      },
+      {
+        action: "download-full-pdf",
+        label: "Save full dashboard as PDF",
+        description: "Saves directly to ~/Downloads",
       },
       {
         action: "open-summary-share",

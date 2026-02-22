@@ -45,7 +45,33 @@ describe("computeCost", () => {
     expect(cost).toBe(0);
   });
 
-  test("falls back gpt-5.3-codex variants to gpt-5.2-codex pricing", () => {
+  test("does not remap gpt-5.3-codex to gpt-5.2-codex pricing", async () => {
+    globalThis.fetch = ((async () =>
+      new Response(
+        JSON.stringify({
+          openai: {
+            id: "openai",
+            models: {
+              "gpt-5.2-codex": {
+                id: "gpt-5.2-codex",
+                cost: {
+                  input: 9,
+                  output: 27,
+                  cache_read: 0,
+                  cache_write: 0,
+                },
+              },
+            },
+          },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      )) as unknown) as typeof fetch;
+
+    await prefetchPricing();
+
     const usage = {
       inputTokens: 1_000,
       outputTokens: 120,
@@ -54,23 +80,30 @@ describe("computeCost", () => {
       reasoningTokens: 30,
     };
 
-    const cost53 = computeCost(usage, "gpt-5.3-codex-build-20260221");
-    const cost52 = computeCost(usage, "gpt-5.2-codex-build-20260221");
+    const cost53 = computeCost(usage, "gpt-5.3-codex");
+    const cost52 = computeCost(usage, "gpt-5.2-codex");
 
-    expect(cost53).not.toBeNull();
+    expect(cost53).toBeNull();
     expect(cost52).not.toBeNull();
-    expect(cost53 ?? 0).toBeCloseTo(cost52 ?? 0, 12);
   });
 
   test("does not match unknown model names via remote substring", async () => {
     globalThis.fetch = ((async () =>
       new Response(
         JSON.stringify({
-          "gpt-5": {
-            input_cost_per_token: 0.00000125,
-            output_cost_per_token: 0.00001,
-            cache_read_input_token_cost: 0.000000125,
-            cache_creation_input_token_cost: 0,
+          openai: {
+            id: "openai",
+            models: {
+              "gpt-5": {
+                id: "gpt-5",
+                cost: {
+                  input: 1.25,
+                  output: 10,
+                  cache_read: 0.125,
+                  cache_write: 0,
+                },
+              },
+            },
           },
         }),
         {
@@ -104,5 +137,58 @@ describe("computeCost", () => {
     await prefetchPricing();
 
     expect(fetchCalls).toBe(1);
+  });
+
+  test("prefers exact provider/model pricing for provider-qualified model names", async () => {
+    globalThis.fetch = ((async () =>
+      new Response(
+        JSON.stringify({
+          openai: {
+            id: "openai",
+            models: {
+              "gpt-5": {
+                id: "gpt-5",
+                cost: {
+                  input: 1,
+                  output: 1,
+                  cache_read: 0,
+                  cache_write: 0,
+                },
+              },
+            },
+          },
+          openrouter: {
+            id: "openrouter",
+            models: {
+              "openai/gpt-5": {
+                id: "openai/gpt-5",
+                cost: {
+                  input: 9,
+                  output: 9,
+                  cache_read: 0,
+                  cache_write: 0,
+                },
+              },
+            },
+          },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      )) as unknown) as typeof fetch;
+
+    await prefetchPricing();
+
+    const usage = {
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+    };
+
+    expect(computeCost(usage, "gpt-5") ?? 0).toBeCloseTo(1, 12);
+    expect(computeCost(usage, "openrouter/openai/gpt-5") ?? 0).toBeCloseTo(9, 12);
   });
 });

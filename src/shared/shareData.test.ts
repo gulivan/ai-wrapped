@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { compressToEncodedURIComponent } from "lz-string";
 import type { SharePayload } from "./shareData";
 import {
   decodeShareData,
@@ -123,6 +124,87 @@ describe("share data codec", () => {
   test("returns null for malformed payload shapes", () => {
     const malformedEncoded = encodeShareData({ v: 1 } as unknown as SharePayload);
     expect(decodeShareData(malformedEncoded)).toBeNull();
+  });
+
+  test("encodes fixture payload more compactly than raw compressed JSON", () => {
+    const legacyEncoded = compressToEncodedURIComponent(JSON.stringify(payloadFixture));
+    const compactEncoded = encodeShareData(payloadFixture);
+    expect(compactEncoded.length).toBeLessThan(legacyEncoded.length);
+  });
+
+  test("decodes compact payloads with omitted optional fields and labels", () => {
+    const compactPayload = {
+      ...payloadFixture,
+      agentBreakdown: [{ source: "codex", tokens: 2000, sessions: 2, costUsd: 1.23 }],
+      timeline: [
+        {
+          date: "2025-12-31",
+          tokens: 2000,
+          sessions: 2,
+          costUsd: 1.23,
+        },
+      ],
+      dailyAgentTokensByDate: {
+        "2025-12-31": { codex: 2000 },
+      },
+      dailyAgentCostsByDate: {
+        "2025-12-31": { codex: 1.23 },
+      },
+      mostExpensiveDay: {
+        date: "2025-12-31",
+        tokens: 2000,
+        sessions: 2,
+        costUsd: 1.23,
+      },
+      hourlyBreakdown: [
+        {
+          hour: 9,
+          sessions: 2,
+          tokens: 2000,
+          costUsd: 1.23,
+          byAgent: [{ source: "codex", sessions: 2, tokens: 2000, costUsd: 1.23 }],
+        },
+      ],
+    } as unknown as SharePayload;
+
+    const expected: SharePayload = {
+      ...payloadFixture,
+      timeline: [
+        {
+          date: "2025-12-31",
+          tokens: 2000,
+          sessions: 2,
+          costUsd: 1.23,
+          durationMs: 0,
+          messages: 0,
+          toolCalls: 0,
+        },
+      ],
+      mostExpensiveDay: {
+        date: "2025-12-31",
+        tokens: 2000,
+        sessions: 2,
+        costUsd: 1.23,
+        durationMs: 0,
+        messages: 0,
+        toolCalls: 0,
+      },
+      hourlyBreakdown: [
+        {
+          hour: 9,
+          label: "9am",
+          sessions: 2,
+          tokens: 2000,
+          costUsd: 1.23,
+          durationMs: 0,
+          byAgent: [{ source: "codex", label: "Codex", sessions: 2, tokens: 2000, costUsd: 1.23 }],
+        },
+      ],
+    };
+
+    const encoded = compressToEncodedURIComponent(JSON.stringify(compactPayload));
+    const decoded = decodeShareData(encoded);
+    expect(decoded).toEqual(expected);
   });
 
   test("round-trips summary payload through encode/decode", () => {

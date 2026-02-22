@@ -103,9 +103,9 @@ const isTimelineRow = (value: unknown): value is SharePayload["timeline"][number
     isFiniteNumber(value.tokens) &&
     isFiniteNumber(value.sessions) &&
     isFiniteNumber(value.costUsd) &&
-    isFiniteNumber(value.durationMs) &&
-    isFiniteNumber(value.messages) &&
-    isFiniteNumber(value.toolCalls)
+    (!("durationMs" in value) || isFiniteNumber(value.durationMs)) &&
+    (!("messages" in value) || isFiniteNumber(value.messages)) &&
+    (!("toolCalls" in value) || isFiniteNumber(value.toolCalls))
   );
 };
 
@@ -125,7 +125,7 @@ const isAgentBreakdownRow = (value: unknown): value is SharePayload["agentBreakd
 
   return (
     isSessionSource(value.source) &&
-    typeof value.label === "string" &&
+    (!("label" in value) || typeof value.label === "string") &&
     isFiniteNumber(value.tokens) &&
     isFiniteNumber(value.sessions) &&
     isFiniteNumber(value.costUsd)
@@ -139,7 +139,7 @@ const isHourlyAgentBreakdownRow = (
 
   return (
     isSessionSource(value.source) &&
-    typeof value.label === "string" &&
+    (!("label" in value) || typeof value.label === "string") &&
     isFiniteNumber(value.sessions) &&
     isFiniteNumber(value.tokens) &&
     isFiniteNumber(value.costUsd)
@@ -151,11 +151,11 @@ const isHourlyBreakdownRow = (value: unknown): value is SharePayload["hourlyBrea
 
   return (
     isFiniteNumber(value.hour) &&
-    typeof value.label === "string" &&
+    (!("label" in value) || typeof value.label === "string") &&
     isFiniteNumber(value.sessions) &&
     isFiniteNumber(value.tokens) &&
     isFiniteNumber(value.costUsd) &&
-    isFiniteNumber(value.durationMs) &&
+    (!("durationMs" in value) || isFiniteNumber(value.durationMs)) &&
     Array.isArray(value.byAgent) &&
     value.byAgent.every((row) => isHourlyAgentBreakdownRow(row))
   );
@@ -203,7 +203,7 @@ const isShareSummaryAgentRow = (value: unknown): value is ShareSummaryPayload["t
 
   return (
     isSessionSource(value.source) &&
-    typeof value.label === "string" &&
+    (!("label" in value) || typeof value.label === "string") &&
     isFiniteNumber(value.percentage) &&
     isFiniteNumber(value.tokens)
   );
@@ -270,6 +270,279 @@ const isShareSummaryPayload = (value: unknown): value is ShareSummaryPayload => 
 const clampPercentage = (value: number): number => Math.max(0, Math.min(100, value));
 const roundToOneDecimal = (value: number): number => Math.round(value * 10) / 10;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_SOURCE_LABELS: Record<SessionSource, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  gemini: "Gemini",
+  opencode: "OpenCode",
+  droid: "Droid",
+  copilot: "Copilot",
+};
+
+const emptySessionSourceMap = (): Record<SessionSource, number> => ({
+  claude: 0,
+  codex: 0,
+  gemini: 0,
+  opencode: 0,
+  droid: 0,
+  copilot: 0,
+});
+
+const defaultSourceLabel = (source: SessionSource): string =>
+  DEFAULT_SOURCE_LABELS[source] ?? source;
+
+const formatHourlyLabel = (hour: number): string => {
+  if (hour === 0) return "12am";
+  if (hour < 12) return `${hour}am`;
+  if (hour === 12) return "12pm";
+  return `${hour - 12}pm`;
+};
+
+const toNumericRecord = (value: unknown): Record<string, number> => {
+  if (!isObjectRecord(value)) return {};
+
+  const next: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (!isFiniteNumber(raw)) continue;
+    next[key] = raw;
+  }
+  return next;
+};
+
+const compactSessionSourceMap = (
+  map: SharePayload["dailyAgentTokensByDate"],
+): SharePayload["dailyAgentTokensByDate"] => {
+  const next: SharePayload["dailyAgentTokensByDate"] = {};
+
+  for (const [date, row] of Object.entries(map)) {
+    const compactRow = Object.fromEntries(
+      Object.entries(row).filter(([, numericValue]) => numericValue !== 0),
+    ) as Record<SessionSource, number>;
+    next[date] = compactRow;
+  }
+
+  return next;
+};
+
+const compactDailyModelMap = (
+  map: SharePayload["dailyModelCostsByDate"],
+): SharePayload["dailyModelCostsByDate"] => {
+  const next: SharePayload["dailyModelCostsByDate"] = {};
+
+  for (const [date, row] of Object.entries(map)) {
+    next[date] = Object.fromEntries(
+      Object.entries(row).filter(([, numericValue]) => numericValue !== 0),
+    );
+  }
+
+  return next;
+};
+
+const normalizeSessionSourceRow = (row: unknown): Record<SessionSource, number> => {
+  const rawValues = toNumericRecord(row);
+  const normalized = emptySessionSourceMap();
+
+  for (const source of SESSION_SOURCES) {
+    const rawValue = rawValues[source];
+    if (isFiniteNumber(rawValue)) {
+      normalized[source] = rawValue;
+    }
+  }
+
+  return normalized;
+};
+
+const normalizeDailySessionSourceMap = (
+  map: unknown,
+): Record<string, Record<SessionSource, number>> => {
+  if (!isObjectRecord(map)) return {};
+
+  const next: Record<string, Record<SessionSource, number>> = {};
+  for (const [date, row] of Object.entries(map)) {
+    next[date] = normalizeSessionSourceRow(row);
+  }
+  return next;
+};
+
+const normalizeDailyModelMap = (map: unknown): Record<string, Record<string, number>> => {
+  if (!isObjectRecord(map)) return {};
+
+  const next: Record<string, Record<string, number>> = {};
+  for (const [date, row] of Object.entries(map)) {
+    next[date] = toNumericRecord(row);
+  }
+  return next;
+};
+
+const normalizeTimelineRow = (
+  row: SharePayload["timeline"][number],
+): SharePayload["timeline"][number] => ({
+  ...row,
+  durationMs: isFiniteNumber(row.durationMs) ? row.durationMs : 0,
+  messages: isFiniteNumber(row.messages) ? row.messages : 0,
+  toolCalls: isFiniteNumber(row.toolCalls) ? row.toolCalls : 0,
+});
+
+const normalizeSharePayload = (value: SharePayload): SharePayload => {
+  const normalizedAgentBreakdown: SharePayload["agentBreakdown"] = value.agentBreakdown.map((entry) => ({
+    source: entry.source,
+    label:
+      typeof entry.label === "string" && entry.label.trim().length > 0
+        ? entry.label
+        : defaultSourceLabel(entry.source),
+    tokens: entry.tokens,
+    sessions: entry.sessions,
+    costUsd: entry.costUsd,
+  }));
+
+  const normalizedHourlyBreakdown: SharePayload["hourlyBreakdown"] = value.hourlyBreakdown.map((entry) => ({
+    hour: entry.hour,
+    label:
+      typeof entry.label === "string" && entry.label.trim().length > 0
+        ? entry.label
+        : formatHourlyLabel(entry.hour),
+    sessions: entry.sessions,
+    tokens: entry.tokens,
+    costUsd: entry.costUsd,
+    durationMs: isFiniteNumber(entry.durationMs) ? entry.durationMs : 0,
+    byAgent: entry.byAgent.map((agentEntry) => ({
+      source: agentEntry.source,
+      label:
+        typeof agentEntry.label === "string" && agentEntry.label.trim().length > 0
+          ? agentEntry.label
+          : defaultSourceLabel(agentEntry.source),
+      sessions: agentEntry.sessions,
+      tokens: agentEntry.tokens,
+      costUsd: agentEntry.costUsd,
+    })),
+  }));
+
+  return {
+    ...value,
+    agentBreakdown: normalizedAgentBreakdown,
+    timeline: value.timeline.map((entry) => normalizeTimelineRow(entry)),
+    dailyAgentTokensByDate: normalizeDailySessionSourceMap(value.dailyAgentTokensByDate),
+    dailyAgentCostsByDate: normalizeDailySessionSourceMap(value.dailyAgentCostsByDate),
+    dailyModelCostsByDate: normalizeDailyModelMap(value.dailyModelCostsByDate),
+    mostExpensiveDay: value.mostExpensiveDay ? normalizeTimelineRow(value.mostExpensiveDay) : null,
+    hourlyBreakdown: normalizedHourlyBreakdown,
+  };
+};
+
+const compactSharePayload = (payload: SharePayload): SharePayload => {
+  const compactAgentBreakdown = payload.agentBreakdown.map((entry) => {
+    const compactEntry: Record<string, unknown> = {
+      source: entry.source,
+      tokens: entry.tokens,
+      sessions: entry.sessions,
+      costUsd: entry.costUsd,
+    };
+
+    if (entry.label !== defaultSourceLabel(entry.source)) {
+      compactEntry.label = entry.label;
+    }
+
+    return compactEntry as SharePayload["agentBreakdown"][number];
+  });
+
+  const compactTimeline = payload.timeline.map((entry) => {
+    const compactEntry: Record<string, unknown> = {
+      date: entry.date,
+      tokens: entry.tokens,
+      sessions: entry.sessions,
+      costUsd: entry.costUsd,
+    };
+
+    if (entry.durationMs !== 0) {
+      compactEntry.durationMs = entry.durationMs;
+    }
+    if (entry.messages !== 0) {
+      compactEntry.messages = entry.messages;
+    }
+    if (entry.toolCalls !== 0) {
+      compactEntry.toolCalls = entry.toolCalls;
+    }
+
+    return compactEntry as SharePayload["timeline"][number];
+  });
+
+  const compactMostExpensiveDay = payload.mostExpensiveDay
+    ? ({
+        date: payload.mostExpensiveDay.date,
+        tokens: payload.mostExpensiveDay.tokens,
+        sessions: payload.mostExpensiveDay.sessions,
+        costUsd: payload.mostExpensiveDay.costUsd,
+        ...(payload.mostExpensiveDay.durationMs !== 0
+          ? { durationMs: payload.mostExpensiveDay.durationMs }
+          : {}),
+        ...(payload.mostExpensiveDay.messages !== 0
+          ? { messages: payload.mostExpensiveDay.messages }
+          : {}),
+        ...(payload.mostExpensiveDay.toolCalls !== 0
+          ? { toolCalls: payload.mostExpensiveDay.toolCalls }
+          : {}),
+      } as SharePayload["mostExpensiveDay"])
+    : null;
+
+  const compactHourlyBreakdown = payload.hourlyBreakdown.map((entry) => {
+    const compactEntry: Record<string, unknown> = {
+      hour: entry.hour,
+      sessions: entry.sessions,
+      tokens: entry.tokens,
+      costUsd: entry.costUsd,
+      byAgent: entry.byAgent.map((agentEntry) => {
+        const compactAgentEntry: Record<string, unknown> = {
+          source: agentEntry.source,
+          sessions: agentEntry.sessions,
+          tokens: agentEntry.tokens,
+          costUsd: agentEntry.costUsd,
+        };
+
+        if (agentEntry.label !== defaultSourceLabel(agentEntry.source)) {
+          compactAgentEntry.label = agentEntry.label;
+        }
+
+        return compactAgentEntry as unknown as SharePayloadHourlyAgentBreakdown;
+      }),
+    };
+
+    if (entry.label !== formatHourlyLabel(entry.hour)) {
+      compactEntry.label = entry.label;
+    }
+
+    if (entry.durationMs !== 0) {
+      compactEntry.durationMs = entry.durationMs;
+    }
+
+    return compactEntry as SharePayload["hourlyBreakdown"][number];
+  });
+
+  return {
+    ...payload,
+    agentBreakdown: compactAgentBreakdown,
+    timeline: compactTimeline,
+    dailyAgentTokensByDate: compactSessionSourceMap(payload.dailyAgentTokensByDate),
+    dailyAgentCostsByDate: compactSessionSourceMap(payload.dailyAgentCostsByDate),
+    dailyModelCostsByDate: compactDailyModelMap(payload.dailyModelCostsByDate),
+    mostExpensiveDay: compactMostExpensiveDay,
+    hourlyBreakdown: compactHourlyBreakdown,
+  };
+};
+
+const compactShareSummaryPayload = (payload: ShareSummaryPayload): ShareSummaryPayload => ({
+  ...payload,
+  topAgents: payload.topAgents.map((entry) => {
+    const compactEntry: Record<string, unknown> = {
+      source: entry.source,
+      percentage: entry.percentage,
+      tokens: entry.tokens,
+    };
+    if (entry.label !== defaultSourceLabel(entry.source)) {
+      compactEntry.label = entry.label;
+    }
+    return compactEntry as unknown as ShareSummaryPayload["topAgents"][number];
+  }),
+});
 
 const computeLongestStreakDays = (timeline: SharePayload["timeline"]): number => {
   const activeDayTimestamps = Array.from(
@@ -344,10 +617,14 @@ export const toShareSummaryPayload = (payload: SharePayload): ShareSummaryPayloa
 };
 
 export const encodeShareData = (payload: SharePayload): string =>
-  compressToEncodedURIComponent(JSON.stringify(payload));
+  compressToEncodedURIComponent(
+    JSON.stringify(isSharePayload(payload) ? compactSharePayload(payload) : payload),
+  );
 
 export const encodeShareSummaryData = (payload: ShareSummaryPayload): string =>
-  compressToEncodedURIComponent(JSON.stringify(payload));
+  compressToEncodedURIComponent(
+    JSON.stringify(isShareSummaryPayload(payload) ? compactShareSummaryPayload(payload) : payload),
+  );
 
 export const decodeShareData = (hash: string): SharePayload | null => {
   if (typeof hash !== "string" || hash.length === 0) return null;
@@ -361,7 +638,7 @@ export const decodeShareData = (hash: string): SharePayload | null => {
   try {
     const parsed: unknown = JSON.parse(decompressed);
     if (!isSharePayload(parsed)) return null;
-    return parsed;
+    return normalizeSharePayload(parsed);
   } catch {
     return null;
   }
@@ -389,6 +666,13 @@ export const decodeShareSummaryData = (encoded: string): ShareSummaryPayload | n
 
     return {
       ...parsed,
+      topAgents: parsed.topAgents.map((entry) => ({
+        ...entry,
+        label:
+          typeof entry.label === "string" && entry.label.trim().length > 0
+            ? entry.label
+            : defaultSourceLabel(entry.source),
+      })),
       longestStreakDays,
     };
   } catch {

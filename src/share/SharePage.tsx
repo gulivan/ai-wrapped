@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { SharePayload, ShareSummaryPayload } from "@shared/shareData";
 import { decodeShareData, decodeShareSummaryData } from "@shared/shareData";
 import DashboardCharts from "../mainview/components/DashboardCharts";
@@ -72,9 +72,11 @@ const heroCopyFromRange = (selectedRange: string): { kicker: string; title: stri
 
 const SharePage = () => {
   const [sharedData, setSharedData] = useState<ShareViewData | null>(() => readPayload());
+  const autoPrintHasRunRef = useRef(false);
 
   useEffect(() => {
     const handleLocationChange = () => {
+      autoPrintHasRunRef.current = false;
       setSharedData(readPayload());
     };
 
@@ -85,6 +87,23 @@ const SharePage = () => {
       window.removeEventListener("popstate", handleLocationChange);
     };
   }, []);
+
+  useEffect(() => {
+    if (sharedData?.kind !== "full") return;
+    if (autoPrintHasRunRef.current) return;
+
+    const shouldAutoPrint = new URLSearchParams(window.location.search).get("download") === "pdf";
+    if (!shouldAutoPrint) return;
+
+    autoPrintHasRunRef.current = true;
+    const timeoutId = window.setTimeout(() => {
+      window.print();
+    }, 450);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [sharedData]);
 
   const heroCopy = useMemo(
     () => heroCopyFromRange(sharedData?.kind === "full" ? sharedData.payload.range : ""),

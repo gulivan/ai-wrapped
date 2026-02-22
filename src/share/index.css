@@ -411,6 +411,50 @@ body {
   }
 }
 
+@media print {
+  :root {
+    color-scheme: light;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 0;
+    height: auto;
+  }
+
+  body {
+    background: #ffffff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .share-shell {
+    min-height: 0;
+    padding: 0;
+  }
+
+  .share-shell > .mx-auto {
+    max-width: none;
+    gap: 0.6rem;
+    padding: 0;
+  }
+
+  .wrapped-card {
+    min-height: 0;
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .wrapped-share-footer {
+    display: none;
+  }
+
+  .wrapped-chart-reveal {
+    animation: none !important;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .wrapped-chart-reveal {
     animation: none;

@@ -11,19 +11,17 @@ export interface ModelPricing {
   cacheWritePer1MAbove200k?: number;
 }
 
-interface LiteLLMModelPricing {
-  input_cost_per_token?: number;
-  output_cost_per_token?: number;
-  cache_creation_input_token_cost?: number;
-  cache_read_input_token_cost?: number;
-  input_cost_per_token_above_200k_tokens?: number;
-  output_cost_per_token_above_200k_tokens?: number;
-  cache_creation_input_token_cost_above_200k_tokens?: number;
-  cache_read_input_token_cost_above_200k_tokens?: number;
+interface ModelsDevProviderPricingEntry {
+  providerId: string;
+  pricing: ModelPricing;
 }
 
-const LITELLM_PRICING_URL =
-  "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+interface ModelsDevPricingDataset {
+  byProviderModel: Map<string, ModelPricing>;
+  byModel: Map<string, ModelsDevProviderPricingEntry[]>;
+}
+
+const MODELS_DEV_PRICING_URL = "https://models.dev/api.json";
 const MILLION = 1_000_000;
 const TIERED_THRESHOLD = 200_000;
 const PRICING_REFRESH_MS = 6 * 60 * 60 * 1000;
@@ -56,95 +54,150 @@ const FREE_MODEL_PRICING: ModelPricing = {
 
 const MODEL_ALIASES = new Map<string, string>([
   ["gpt-5-codex", "gpt-5"],
-  ["gpt-5.3-codex", "gpt-5.2-codex"],
 ]);
 
-const PROVIDER_PREFIXES = ["anthropic/", "openai/", "azure/", "openrouter/openai/"];
+const PROVIDER_PREFIXES = [
+  "anthropic/",
+  "openai/",
+  "google/",
+  "xai/",
+  "x-ai/",
+  "azure/",
+  "vertex/",
+  "openrouter/",
+  "openrouter/openai/",
+  "openrouter/anthropic/",
+  "openrouter/google/",
+  "openrouter/x-ai/",
+];
 
-let liteLLMPricingCache: Map<string, LiteLLMModelPricing> | null = null;
+const PROVIDER_PRIORITY_ORDER = [
+  "openai",
+  "anthropic",
+  "google",
+  "xai",
+  "x-ai",
+  "deepseek",
+  "mistral",
+  "cohere",
+  "meta",
+  "alibaba",
+  "amazon-bedrock",
+  "azure",
+  "vertex",
+  "openrouter",
+];
+
+const PROVIDER_PRIORITY_RANK = new Map<string, number>(
+  PROVIDER_PRIORITY_ORDER.map((providerId, index) => [providerId, index]),
+);
+
+let modelsDevPricingCache: ModelsDevPricingDataset | null = null;
 let modelPricingCache = new Map<string, ModelPricing>();
 let lastPricingRefreshAt = 0;
 let pricingRefreshPromise: Promise<void> | null = null;
 
 export const __resetPricingStateForTests = (): void => {
-  liteLLMPricingCache = null;
+  modelsDevPricingCache = null;
   modelPricingCache = new Map();
   lastPricingRefreshAt = 0;
   pricingRefreshPromise = null;
 };
 
 const applyModelAlias = (model: string): string => {
-  const gpt53Remapped = model.toLowerCase().replace(/gpt-5\.3-codex/g, "gpt-5.2-codex");
-  const directAlias = MODEL_ALIASES.get(gpt53Remapped);
-  return directAlias ?? gpt53Remapped;
+  const normalized = model.toLowerCase();
+  const directAlias = MODEL_ALIASES.get(normalized);
+  return directAlias ?? normalized;
 };
 
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 
-const toPerMillion = (value: unknown, fallback?: unknown): number => {
-  const perToken = isFiniteNumber(value) ? value : isFiniteNumber(fallback) ? fallback : 0;
-  return perToken * MILLION;
-};
-
-const toOptionalPerMillion = (value: unknown): number | undefined => {
-  if (!isFiniteNumber(value)) return undefined;
-  return value * MILLION;
-};
-
-const normalizeLiteLLMEntry = (value: unknown): LiteLLMModelPricing | null => {
+const asRecord = (value: unknown): Record<string, unknown> | null => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+};
 
-  const record = value as Record<string, unknown>;
-  const pricing: LiteLLMModelPricing = {};
+const normalizeModelsDevCost = (value: unknown): ModelPricing | null => {
+  const record = asRecord(value);
+  if (!record) return null;
 
-  const assignIfFinite = <K extends keyof LiteLLMModelPricing>(key: K, sourceValue: unknown): void => {
-    if (isFiniteNumber(sourceValue)) {
-      pricing[key] = sourceValue;
-    }
-  };
-
-  assignIfFinite("input_cost_per_token", record.input_cost_per_token);
-  assignIfFinite("output_cost_per_token", record.output_cost_per_token);
-  assignIfFinite("cache_creation_input_token_cost", record.cache_creation_input_token_cost);
-  assignIfFinite("cache_read_input_token_cost", record.cache_read_input_token_cost);
-  assignIfFinite("input_cost_per_token_above_200k_tokens", record.input_cost_per_token_above_200k_tokens);
-  assignIfFinite("output_cost_per_token_above_200k_tokens", record.output_cost_per_token_above_200k_tokens);
-  assignIfFinite(
-    "cache_creation_input_token_cost_above_200k_tokens",
-    record.cache_creation_input_token_cost_above_200k_tokens,
-  );
-  assignIfFinite(
-    "cache_read_input_token_cost_above_200k_tokens",
-    record.cache_read_input_token_cost_above_200k_tokens,
-  );
-
-  if (Object.keys(pricing).length === 0) {
+  const input = record.input;
+  const output = record.output;
+  if (!isFiniteNumber(input) || !isFiniteNumber(output)) {
     return null;
   }
 
-  return pricing;
+  return {
+    inputPer1M: input,
+    outputPer1M: output,
+    cacheReadPer1M: isFiniteNumber(record.cache_read) ? record.cache_read : 0,
+    cacheWritePer1M: isFiniteNumber(record.cache_write) ? record.cache_write : 0,
+  };
 };
 
-const toLiteLLMPricingMap = (raw: unknown): Map<string, LiteLLMModelPricing> => {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return new Map();
+const upsertProviderModelPricing = (
+  byModel: Map<string, ModelsDevProviderPricingEntry[]>,
+  modelId: string,
+  providerId: string,
+  pricing: ModelPricing,
+): void => {
+  const existing = byModel.get(modelId) ?? [];
+  const next = { providerId, pricing };
+  const index = existing.findIndex((entry) => entry.providerId === providerId);
+  if (index >= 0) {
+    existing[index] = next;
+  } else {
+    existing.push(next);
+  }
+  byModel.set(modelId, existing);
+};
+
+const toModelsDevPricingDataset = (raw: unknown): ModelsDevPricingDataset => {
+  const root = asRecord(raw);
+  const byProviderModel = new Map<string, ModelPricing>();
+  const byModel = new Map<string, ModelsDevProviderPricingEntry[]>();
+
+  if (!root) {
+    return { byProviderModel, byModel };
   }
 
-  const output = new Map<string, LiteLLMModelPricing>();
+  for (const [providerKey, providerData] of Object.entries(root)) {
+    const providerRecord = asRecord(providerData);
+    if (!providerRecord) continue;
 
-  for (const [modelName, modelData] of Object.entries(raw as Record<string, unknown>)) {
-    const normalized = normalizeLiteLLMEntry(modelData);
-    if (!normalized) continue;
+    const providerIdRaw =
+      typeof providerRecord.id === "string" && providerRecord.id.trim().length > 0
+        ? providerRecord.id
+        : providerKey;
+    const providerId = providerIdRaw.toLowerCase();
 
-    output.set(modelName.toLowerCase(), normalized);
+    const modelsRecord = asRecord(providerRecord.models);
+    if (!modelsRecord) continue;
+
+    for (const [modelKey, modelData] of Object.entries(modelsRecord)) {
+      const modelRecord = asRecord(modelData);
+      if (!modelRecord) continue;
+
+      const modelIdRaw =
+        typeof modelRecord.id === "string" && modelRecord.id.trim().length > 0
+          ? modelRecord.id
+          : modelKey;
+      const modelId = modelIdRaw.toLowerCase();
+
+      const pricing = normalizeModelsDevCost(modelRecord.cost);
+      if (!pricing) continue;
+
+      byProviderModel.set(`${providerId}/${modelId}`, pricing);
+      upsertProviderModelPricing(byModel, modelId, providerId, pricing);
+    }
   }
 
-  return output;
+  return { byProviderModel, byModel };
 };
 
 const refreshPricingCache = async (): Promise<void> => {
-  const response = await fetch(LITELLM_PRICING_URL, {
+  const response = await fetch(MODELS_DEV_PRICING_URL, {
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!response.ok) {
@@ -152,12 +205,12 @@ const refreshPricingCache = async (): Promise<void> => {
   }
 
   const payload = (await response.json()) as unknown;
-  const dataset = toLiteLLMPricingMap(payload);
-  if (dataset.size === 0) {
-    throw new Error("LiteLLM pricing payload did not contain any usable model rates");
+  const dataset = toModelsDevPricingDataset(payload);
+  if (dataset.byProviderModel.size === 0) {
+    throw new Error("Models.dev pricing payload did not contain any usable model rates");
   }
 
-  liteLLMPricingCache = dataset;
+  modelsDevPricingCache = dataset;
   modelPricingCache = new Map();
   lastPricingRefreshAt = Date.now();
 };
@@ -206,20 +259,7 @@ const isOpenRouterFreeModel = (model: string): boolean => {
   return normalized === "openrouter/free" || (normalized.startsWith("openrouter/") && normalized.endsWith(":free"));
 };
 
-const toModelPricing = (pricing: LiteLLMModelPricing): ModelPricing => ({
-  inputPer1M: toPerMillion(pricing.input_cost_per_token),
-  outputPer1M: toPerMillion(pricing.output_cost_per_token),
-  cacheReadPer1M: toPerMillion(pricing.cache_read_input_token_cost, pricing.input_cost_per_token),
-  cacheWritePer1M: toPerMillion(pricing.cache_creation_input_token_cost),
-  inputPer1MAbove200k: toOptionalPerMillion(pricing.input_cost_per_token_above_200k_tokens),
-  outputPer1MAbove200k: toOptionalPerMillion(pricing.output_cost_per_token_above_200k_tokens),
-  cacheReadPer1MAbove200k: toOptionalPerMillion(pricing.cache_read_input_token_cost_above_200k_tokens),
-  cacheWritePer1MAbove200k: toOptionalPerMillion(pricing.cache_creation_input_token_cost_above_200k_tokens),
-});
-
-const findLiteLLMPricing = (model: string): LiteLLMModelPricing | null => {
-  if (!liteLLMPricingCache) return null;
-
+const buildModelCandidates = (model: string): string[] => {
   const normalizedModel = model.toLowerCase();
   const aliasedModel = applyModelAlias(normalizedModel);
   const candidates = new Set<string>([normalizedModel, aliasedModel]);
@@ -233,17 +273,100 @@ const findLiteLLMPricing = (model: string): LiteLLMModelPricing | null => {
 
     for (const prefix of PROVIDER_PREFIXES) {
       candidates.add(`${prefix}${candidate}`);
+      if (candidate.startsWith(prefix) && candidate.length > prefix.length) {
+        candidates.add(candidate.slice(prefix.length));
+      }
     }
   }
+
+  return Array.from(candidates).filter((candidate) => candidate.length > 0);
+};
+
+const splitProviderModel = (value: string): { providerId: string; modelId: string } | null => {
+  const slashIndex = value.indexOf("/");
+  if (slashIndex <= 0 || slashIndex >= value.length - 1) return null;
+
+  return {
+    providerId: value.slice(0, slashIndex),
+    modelId: value.slice(slashIndex + 1),
+  };
+};
+
+const providerPriority = (providerId: string): number => PROVIDER_PRIORITY_RANK.get(providerId) ?? 10_000;
+
+const selectPreferredProviderPricing = (
+  options: ModelsDevProviderPricingEntry[],
+  providerHint?: string,
+): ModelsDevProviderPricingEntry | null => {
+  if (options.length === 0) return null;
+
+  let best: ModelsDevProviderPricingEntry | null = null;
+  let bestRank = Number.POSITIVE_INFINITY;
+
+  for (const option of options) {
+    const rank = providerHint && option.providerId === providerHint ? -1 : providerPriority(option.providerId);
+    if (!best || rank < bestRank || (rank === bestRank && option.providerId < best.providerId)) {
+      best = option;
+      bestRank = rank;
+    }
+  }
+
+  return best;
+};
+
+const findModelsDevPricing = (model: string): ModelPricing | null => {
+  if (!modelsDevPricingCache) return null;
+
+  const candidates = buildModelCandidates(model);
 
   for (const candidate of candidates) {
-    const pricing = liteLLMPricingCache.get(candidate);
-    if (pricing) {
-      return pricing;
+    const split = splitProviderModel(candidate);
+    if (!split) continue;
+
+    const exact = modelsDevPricingCache.byProviderModel.get(`${split.providerId}/${split.modelId}`);
+    if (exact) return exact;
+  }
+
+  const lookupCandidates: Array<{ modelId: string; providerHint?: string }> = [];
+  const seen = new Set<string>();
+  const pushLookupCandidate = (modelId: string, providerHint?: string): void => {
+    const key = `${providerHint ?? ""}|${modelId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    lookupCandidates.push({ modelId, providerHint });
+  };
+
+  for (const candidate of candidates) {
+    pushLookupCandidate(candidate);
+
+    const split = splitProviderModel(candidate);
+    if (split) {
+      pushLookupCandidate(split.modelId, split.providerId);
     }
   }
 
-  return null;
+  let best: ModelsDevProviderPricingEntry | null = null;
+  let bestRank = Number.POSITIVE_INFINITY;
+
+  for (const lookup of lookupCandidates) {
+    const options = modelsDevPricingCache.byModel.get(lookup.modelId);
+    if (!options || options.length === 0) continue;
+
+    const selected = selectPreferredProviderPricing(options, lookup.providerHint);
+    if (!selected) continue;
+
+    const rank =
+      lookup.providerHint && selected.providerId === lookup.providerHint ? -1 : providerPriority(selected.providerId);
+
+    if (!best || rank < bestRank || (rank === bestRank && selected.providerId < best.providerId)) {
+      best = selected;
+      bestRank = rank;
+    }
+
+    if (bestRank === -1) break;
+  }
+
+  return best?.pricing ?? null;
 };
 
 const resolveModelPricing = (model: string): ModelPricing | null => {
@@ -258,9 +381,9 @@ const resolveModelPricing = (model: string): ModelPricing | null => {
   const cached = modelPricingCache.get(normalizedModel) ?? modelPricingCache.get(aliasedModel);
   if (cached) return cached;
 
-  const liteLLMMatch = findLiteLLMPricing(normalizedModel);
-  const resolved = liteLLMMatch
-    ? toModelPricing(liteLLMMatch)
+  const modelsDevMatch = findModelsDevPricing(normalizedModel);
+  const resolved = modelsDevMatch
+    ? modelsDevMatch
     : PRICING[aliasedModel] ?? findPricingByPrefix(aliasedModel) ?? PRICING[normalizedModel] ?? findPricingByPrefix(normalizedModel);
 
   if (resolved) {
