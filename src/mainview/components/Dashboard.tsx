@@ -7,6 +7,7 @@ import StatsCards, { AnimatedNumber } from "./StatsCards";
 import { useRPC } from "../hooks/useRPC";
 import { useDashboardData, type DashboardDateRange } from "../hooks/useDashboardData";
 import { SOURCE_LABELS } from "../lib/constants";
+import { compactSharePayloadForTargetLength } from "../lib/shareCompaction";
 import { formatDate, formatDuration, formatNumber } from "../lib/formatters";
 import {
   encodeShareData,
@@ -19,6 +20,7 @@ import { downloadShareSummaryImage } from "../lib/shareImage";
 const clampPercentage = (value: number): number => Math.max(0, Math.min(100, value));
 const CARD_ANIMATION_MS = 2000;
 const MAX_SHARE_HASH_LENGTH = 60000;
+const TARGET_FULL_SHARE_HASH_LENGTH = 2000;
 type CostAgentFilter = "all" | SessionSource;
 type CostGroupBy = "none" | "by-agent" | "by-model";
 
@@ -186,8 +188,21 @@ const Dashboard = () => {
     weekendSessionPercent,
   ]);
 
-  const buildFullShareUrl = useCallback((payload: SharePayload): string => {
-    const encoded = encodeShareData(payload);
+  const buildFullShareUrl = useCallback((payload: SharePayload, options?: { targetLength?: number }): string => {
+    const targetLength = options?.targetLength;
+    const { encoded, appliedSteps } =
+      typeof targetLength === "number"
+        ? compactSharePayloadForTargetLength(payload, targetLength)
+        : { encoded: encodeShareData(payload), appliedSteps: [] as string[] };
+
+    if (appliedSteps.length > 0) {
+      console.info("[share] Compacted full share payload", {
+        targetLength,
+        encodedLength: encoded.length,
+        appliedSteps,
+      });
+    }
+
     if (!encoded || encoded.length > MAX_SHARE_HASH_LENGTH) {
       throw new Error(`Encoded share payload exceeds safe URL length (${encoded.length} chars)`);
     }
@@ -203,41 +218,44 @@ const Dashboard = () => {
 
       setShareBusyAction(action);
       try {
-        if (action === "download-image") {
-          await downloadShareSummaryImage(toShareSummaryPayload(payload));
-          return;
-        }
-
-        if (action === "download-full-pdf") {
-          const exported = await rpc.request.exportFullSharePdf({
-            url: buildFullShareUrl(payload),
-          });
-          window.alert(`PDF saved to ${exported.path}\nRendered with ${exported.browser}.`);
-          return;
-        }
-
-        if (action === "open-summary-share") {
-          const summaryEncoded = encodeShareSummaryData(toShareSummaryPayload(payload));
-          if (!summaryEncoded || summaryEncoded.length > MAX_SHARE_HASH_LENGTH) {
-            throw new Error(`Encoded summary payload exceeds safe URL length (${summaryEncoded.length} chars)`);
+        switch (action) {
+          case "download-image":
+            await downloadShareSummaryImage(toShareSummaryPayload(payload));
+            return;
+          case "download-full-pdf": {
+            const exported = await rpc.request.exportFullSharePdf({
+              url: buildFullShareUrl(payload),
+            });
+            window.alert(`PDF saved to ${exported.path}\nRendered with ${exported.browser}.`);
+            return;
           }
+          case "open-summary-share": {
+            const summaryEncoded = encodeShareSummaryData(toShareSummaryPayload(payload));
+            if (!summaryEncoded || summaryEncoded.length > MAX_SHARE_HASH_LENGTH) {
+              throw new Error(`Encoded summary payload exceeds safe URL length (${summaryEncoded.length} chars)`);
+            }
 
-          rpc.send.openExternal({
-            url: `https://ai-wrapped.com/share?share_summary=${encodeURIComponent(summaryEncoded)}`,
-          });
-          return;
+            rpc.send.openExternal({
+              url: `https://ai-wrapped.com/share?share_summary=${encodeURIComponent(summaryEncoded)}`,
+            });
+            return;
+          }
+          case "open-full-share-no-repos":
+            rpc.send.openExternal({
+              url: buildFullShareUrl({ ...payload, topRepos: [] }, { targetLength: TARGET_FULL_SHARE_HASH_LENGTH }),
+            });
+            return;
+          case "open-full-share-max":
+            rpc.send.openExternal({
+              url: buildFullShareUrl(payload),
+            });
+            return;
+          case "open-full-share-compact":
+            rpc.send.openExternal({
+              url: buildFullShareUrl(payload, { targetLength: TARGET_FULL_SHARE_HASH_LENGTH }),
+            });
+            return;
         }
-
-        if (action === "open-full-share-no-repos") {
-          rpc.send.openExternal({
-            url: buildFullShareUrl({ ...payload, topRepos: [] }),
-          });
-          return;
-        }
-
-        rpc.send.openExternal({
-          url: buildFullShareUrl(payload),
-        });
       } catch (caught) {
         const message =
           caught instanceof Error ? caught.message : "Failed to generate share output";
