@@ -1,4 +1,4 @@
-import type { Session } from "./session-schema";
+import type { Session, SessionModelUsage } from "./session-schema";
 import {
   createEmptyDayStats,
   type DailyAggregateEntry,
@@ -110,6 +110,21 @@ const toSessionStats = (session: Session): DayStats => ({
   durationMs: session.durationMs ?? 0,
 });
 
+const toModelStats = (usage: SessionModelUsage): DayStats => ({
+  // A session that uses several models is intentionally counted once for each
+  // model, while its token and cost totals remain exclusive to that model.
+  sessions: 1,
+  messages: usage.messageCount,
+  toolCalls: usage.toolCallCount,
+  inputTokens: usage.tokens.inputTokens,
+  outputTokens: usage.tokens.outputTokens,
+  cacheReadTokens: usage.tokens.cacheReadTokens,
+  cacheWriteTokens: usage.tokens.cacheWriteTokens,
+  reasoningTokens: usage.tokens.reasoningTokens,
+  costUsd: usage.costUsd,
+  durationMs: 0,
+});
+
 const toRepoKey = (repoName: string | null): string | null => {
   if (!repoName) return null;
   const trimmed = repoName.trim();
@@ -196,15 +211,11 @@ export const aggregateSessionsByDate = (
   for (const session of sessions) {
     const date = toDayKey(session, dateFormatter);
     const entry = ensureDateEntry(daily, date);
-    const modelKey = session.model && session.model.trim().length > 0 ? session.model : "unknown";
     const repoKey = toRepoKey(session.repoName);
     const stats = toSessionStats(session);
 
     if (!entry.bySource[session.source]) {
       entry.bySource[session.source] = createEmptyDayStats();
-    }
-    if (!entry.byModel[modelKey]) {
-      entry.byModel[modelKey] = createEmptyDayStats();
     }
     if (repoKey && !entry.byRepo[repoKey]) {
       entry.byRepo[repoKey] = createEmptyDayStats();
@@ -224,7 +235,21 @@ export const aggregateSessionsByDate = (
     }
 
     addStats(entry.bySource[session.source] as DayStats, stats);
-    addStats(entry.byModel[modelKey] as DayStats, stats);
+    const modelUsage = session.modelUsage.length > 0
+      ? session.modelUsage
+      : [{
+          model: session.model?.trim() || "unknown",
+          messageCount: session.messageCount,
+          toolCallCount: session.toolCallCount,
+          tokens: session.totalTokens,
+          costUsd: session.totalCostUsd ?? 0,
+        }];
+    for (const usage of modelUsage) {
+      if (!entry.byModel[usage.model]) {
+        entry.byModel[usage.model] = createEmptyDayStats();
+      }
+      addStats(entry.byModel[usage.model] as DayStats, toModelStats(usage));
+    }
     if (repoKey) {
       addStats(entry.byRepo[repoKey] as DayStats, stats);
     }

@@ -173,6 +173,21 @@ describe("codexParser", () => {
         cacheWriteTokens: 0,
         reasoningTokens: 15,
       });
+      expect(normalized.session.modelUsage).toEqual([
+        {
+          model: "unknown",
+          messageCount: 0,
+          toolCallCount: 0,
+          tokens: {
+            inputTokens: 90,
+            outputTokens: 20,
+            cacheReadTokens: 80,
+            cacheWriteTokens: 0,
+            reasoningTokens: 15,
+          },
+          costUsd: 0,
+        },
+      ]);
     } finally {
       rmSync(fixtureDir, { recursive: true, force: true });
     }
@@ -343,6 +358,78 @@ describe("codexParser", () => {
 
       const normalized = normalizeSession(parsed);
       expect(normalized.session.totalCostUsd ?? 0).toBeCloseTo(0.021, 10);
+    } finally {
+      rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
+  test("attributes token deltas to the model active in each turn", async () => {
+    const fixtureDir = mkdtempSync(join(tmpdir(), "ai-stats-codex-"));
+
+    try {
+      const filePath = join(fixtureDir, "rollout-2026-07-13T13-19-00-model-switch.jsonl");
+      const content = [
+        JSON.stringify({
+          type: "session_meta",
+          timestamp: "2026-07-13T13:19:00Z",
+          payload: { id: "session-model-switch", cwd: "/tmp/project", model_provider: "gpt-5.5" },
+        }),
+        JSON.stringify({
+          type: "turn_context",
+          timestamp: "2026-07-13T13:19:01Z",
+          payload: { model: "gpt-5.5" },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-07-13T13:19:02Z",
+          payload: {
+            type: "token_count",
+            info: { total_token_usage: { input_tokens: 100, output_tokens: 10 } },
+          },
+        }),
+        JSON.stringify({
+          type: "turn_context",
+          timestamp: "2026-07-13T13:20:00Z",
+          payload: { model: "gpt-5.6-sol" },
+        }),
+        JSON.stringify({
+          type: "event_msg",
+          timestamp: "2026-07-13T13:20:01Z",
+          payload: {
+            type: "token_count",
+            info: { total_token_usage: { input_tokens: 350, output_tokens: 40 } },
+          },
+        }),
+      ].join("\n");
+
+      writeFileSync(filePath, content, "utf8");
+      const fileStat = statSync(filePath);
+      const parsed = await codexParser.parse({
+        path: filePath,
+        source: "codex",
+        mtime: fileStat.mtimeMs,
+        size: fileStat.size,
+      });
+
+      expect(parsed).not.toBeNull();
+      if (!parsed) return;
+
+      const normalized = normalizeSession(parsed);
+      expect(normalized.session.modelUsage).toHaveLength(2);
+      expect(normalized.session.modelUsage[0]).toMatchObject({
+        model: "gpt-5.5",
+        messageCount: 0,
+        toolCallCount: 0,
+        tokens: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      });
+      expect(normalized.session.modelUsage[0]?.costUsd).toBeCloseTo(0.0008, 12);
+      expect(normalized.session.modelUsage[1]).toMatchObject({
+        model: "gpt-5.6-sol",
+        messageCount: 0,
+        toolCallCount: 0,
+        tokens: { inputTokens: 250, outputTokens: 30, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+      });
+      expect(normalized.session.modelUsage[1]?.costUsd).toBeCloseTo(0.00215, 12);
     } finally {
       rmSync(fixtureDir, { recursive: true, force: true });
     }

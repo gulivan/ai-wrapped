@@ -10,7 +10,15 @@ export interface TokenUsage {
   reasoningTokens: number;
 }
 
-export type { Session, SessionEvent, SessionEventKind, SessionFilters, SessionSortBy, SessionSortDir } from "./session-types";
+export type {
+  Session,
+  SessionEvent,
+  SessionEventKind,
+  SessionFilters,
+  SessionModelUsage,
+  SessionSortBy,
+  SessionSortDir,
+} from "./session-types";
 
 export const EMPTY_TOKEN_USAGE: TokenUsage = {
   inputTokens: 0,

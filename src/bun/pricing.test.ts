@@ -45,6 +45,20 @@ describe("computeCost", () => {
     expect(cost).toBe(0);
   });
 
+  test("prices GPT-5.6 variants and Claude Fable without a remote pricing refresh", () => {
+    const usage = {
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+    };
+
+    expect(computeCost(usage, "gpt-5.6-sol")).toBe(5);
+    expect(computeCost(usage, "gpt-5.6-terra")).toBe(2.5);
+    expect(computeCost(usage, "claude-fable-5")).toBe(10);
+  });
+
   test("does not remap gpt-5.3-codex to gpt-5.2-codex pricing", async () => {
     globalThis.fetch = ((async () =>
       new Response(

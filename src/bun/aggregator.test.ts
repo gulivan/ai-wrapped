@@ -21,6 +21,13 @@ const makeSession = (overrides: Partial<Session>): Session => ({
   messageCount: 2,
   totalTokens: { ...EMPTY_TOKEN_USAGE },
   totalCostUsd: 0.5,
+  modelUsage: [{
+    model: "gpt-5",
+    messageCount: 2,
+    toolCallCount: 1,
+    tokens: { ...EMPTY_TOKEN_USAGE },
+    costUsd: 0.5,
+  }],
   toolCallCount: 1,
   isHousekeeping: false,
   parsedAt: "2026-02-21T10:02:00.000Z",
@@ -96,5 +103,36 @@ describe("aggregateSessionsByDate", () => {
     const entry = daily["2026-02-21"];
     expect(entry).toBeDefined();
     expect(entry?.byHour["10"]?.sessions).toBe(1);
+  });
+
+  test("attributes token and cost usage to every model used in a session", () => {
+    const daily = aggregateSessionsByDate([
+      makeSession({
+        model: "gpt-5.5",
+        totalTokens: { inputTokens: 300, outputTokens: 30, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+        totalCostUsd: 0.003,
+        modelUsage: [
+          {
+            model: "gpt-5.5",
+            messageCount: 1,
+            toolCallCount: 0,
+            tokens: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+            costUsd: 0.001,
+          },
+          {
+            model: "gpt-5.6-sol",
+            messageCount: 1,
+            toolCallCount: 0,
+            tokens: { inputTokens: 200, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+            costUsd: 0.002,
+          },
+        ],
+      }),
+    ], { timeZone: "UTC" });
+
+    const entry = daily["2026-02-21"];
+    expect(entry?.byModel["gpt-5.5"]?.inputTokens).toBe(100);
+    expect(entry?.byModel["gpt-5.6-sol"]?.inputTokens).toBe(200);
+    expect(entry?.byModel["gpt-5.6-sol"]?.costUsd).toBe(0.002);
   });
 });

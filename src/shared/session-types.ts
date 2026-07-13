@@ -20,6 +20,14 @@ export interface SessionEvent {
   costUsd: number | null;
 }
 
+export interface SessionModelUsage {
+  model: string;
+  messageCount: number;
+  toolCallCount: number;
+  tokens: TokenUsage;
+  costUsd: number;
+}
+
 export interface Session {
   id: string;
   source: SessionSource;
@@ -38,6 +46,7 @@ export interface Session {
   messageCount: number;
   totalTokens: TokenUsage;
   totalCostUsd: number | null;
+  modelUsage: SessionModelUsage[];
   toolCallCount: number;
   isHousekeeping: boolean;
   parsedAt: string;

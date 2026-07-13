@@ -3,7 +3,7 @@ import {
   EMPTY_TOKEN_USAGE,
   type TokenUsage,
 } from "../shared/schema";
-import type { Session, SessionEvent, SessionEventKind } from "./session-schema";
+import type { Session, SessionEvent, SessionEventKind, SessionModelUsage } from "./session-schema";
 import { computeCost } from "./pricing";
 import type { RawParsedSession } from "./parsers/types";
 
@@ -345,6 +345,54 @@ const findSessionModel = (events: SessionEvent[], fallback: string | null): stri
   return winner ?? fallback;
 };
 
+const buildModelUsage = (events: SessionEvent[], fallback: string | null): SessionModelUsage[] => {
+  const byModel = new Map<string, SessionModelUsage>();
+
+  for (const event of events) {
+    const hasUsage = event.tokens !== null || event.costUsd !== null;
+    const isCountableEvent = event.kind === "user" || event.kind === "assistant" || event.kind === "tool_call";
+    if (!hasUsage && !isCountableEvent) continue;
+
+    // Do not turn a provider name from session metadata (for example
+    // "openai" or "omnirouter") into a model row for early user messages.
+    const model = event.model?.trim() || (hasUsage ? fallback?.trim() || "unknown" : "");
+    if (!model) continue;
+    const current = byModel.get(model) ?? {
+      model,
+      messageCount: 0,
+      toolCallCount: 0,
+      tokens: { ...EMPTY_TOKEN_USAGE },
+      costUsd: 0,
+    };
+
+    current.tokens = addTokenUsage(current.tokens, event.tokens);
+    if (typeof event.costUsd === "number" && Number.isFinite(event.costUsd)) {
+      current.costUsd += event.costUsd;
+    }
+    if (event.kind === "user" || event.kind === "assistant") {
+      current.messageCount += 1;
+    }
+    if (event.kind === "tool_call") {
+      current.toolCallCount += 1;
+    }
+
+    byModel.set(model, current);
+  }
+
+  if (byModel.size === 0) {
+    const model = fallback?.trim() || "unknown";
+    byModel.set(model, {
+      model,
+      messageCount: 0,
+      toolCallCount: 0,
+      tokens: { ...EMPTY_TOKEN_USAGE },
+      costUsd: 0,
+    });
+  }
+
+  return Array.from(byModel.values()).sort((left, right) => left.model.localeCompare(right.model));
+};
+
 const deriveTitle = (events: SessionEvent[], explicit: string | null): string | null => {
   if (explicit && explicit.trim().length > 0) return explicit.trim();
 
@@ -445,6 +493,7 @@ export const normalizeSession = (parsed: RawParsedSession): { session: Session; 
     messageCount,
     totalTokens,
     totalCostUsd: hasCost ? totalCost : null,
+    modelUsage: buildModelUsage(events, parsed.metadata.model),
     toolCallCount,
     isHousekeeping: housekeeping,
     parsedAt: new Date().toISOString(),

@@ -14,6 +14,14 @@ const getString = (value: unknown): string | null => {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 };
 
+const CODEX_PROVIDER_NAMES = new Set(["openai", "chatgpt", "codex", "omnirouter"]);
+
+const getCodexModelProvider = (value: unknown): string | null => {
+  const candidate = getString(value);
+  if (!candidate || CODEX_PROVIDER_NAMES.has(candidate.toLowerCase())) return null;
+  return candidate;
+};
+
 const parseJsonl = (content: string): Array<Record<string, unknown>> => {
   const records: Array<Record<string, unknown>> = [];
   for (const line of content.split(/\r?\n/)) {
@@ -358,7 +366,7 @@ export const codexParser: SessionParser = {
           cwd = cwd ?? getString(payload?.cwd);
           gitBranch = gitBranch ?? getString(git?.branch);
           cliVersion = cliVersion ?? getString(payload?.cli_version);
-          model = model ?? getString(payload?.model_provider);
+          model = model ?? getCodexModelProvider(payload?.model_provider);
 
           events.push(
             createEvent(sessionId, lineIndex, record, "meta", {
