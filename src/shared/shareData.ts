@@ -277,16 +277,19 @@ const DEFAULT_SOURCE_LABELS: Record<SessionSource, string> = {
   opencode: "OpenCode",
   droid: "Droid",
   copilot: "Copilot",
+  amp: "Amp",
+  codebuff: "Codebuff",
+  goose: "Goose",
+  hermes: "Hermes",
+  kilo: "Kilo",
+  kimi: "Kimi",
+  openclaw: "OpenClaw",
+  pi: "pi",
+  qwen: "Qwen Code",
 };
 
-const emptySessionSourceMap = (): Record<SessionSource, number> => ({
-  claude: 0,
-  codex: 0,
-  gemini: 0,
-  opencode: 0,
-  droid: 0,
-  copilot: 0,
-});
+const emptySessionSourceMap = (): Record<SessionSource, number> =>
+  Object.fromEntries(SESSION_SOURCES.map((source) => [source, 0])) as Record<SessionSource, number>;
 
 const defaultSourceLabel = (source: SessionSource): string =>
   DEFAULT_SOURCE_LABELS[source] ?? source;

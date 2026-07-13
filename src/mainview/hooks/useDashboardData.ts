@@ -196,23 +196,11 @@ const emptyTotals: DashboardTotals = {
   mostExpensiveDay: null,
 };
 
-const createEmptySourceTokenMap = (): Record<SessionSource, number> => ({
-  claude: 0,
-  codex: 0,
-  gemini: 0,
-  opencode: 0,
-  droid: 0,
-  copilot: 0,
-});
+const createEmptySourceTokenMap = (): Record<SessionSource, number> =>
+  Object.fromEntries(SESSION_SOURCES.map((source) => [source, 0])) as Record<SessionSource, number>;
 
-const createEmptySourceCostMap = (): Record<SessionSource, number> => ({
-  claude: 0,
-  codex: 0,
-  gemini: 0,
-  opencode: 0,
-  droid: 0,
-  copilot: 0,
-});
+const createEmptySourceCostMap = (): Record<SessionSource, number> =>
+  Object.fromEntries(SESSION_SOURCES.map((source) => [source, 0])) as Record<SessionSource, number>;
 
 const buildDailyAgentTokensByDate = (
   rowsBySource: Array<{ source: SessionSource; rows: DailyAggregate[] }>,

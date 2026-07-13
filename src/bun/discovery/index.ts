@@ -1,4 +1,15 @@
 import type { SessionSource } from "../../shared/schema";
+import {
+  ampDiscoverer,
+  codebuffDiscoverer,
+  gooseDiscoverer,
+  hermesDiscoverer,
+  kiloDiscoverer,
+  kimiDiscoverer,
+  openclawDiscoverer,
+  piDiscoverer,
+  qwenDiscoverer,
+} from "./additional";
 import { claudeDiscoverer } from "./claude";
 import { codexDiscoverer } from "./codex";
 import { copilotDiscoverer } from "./copilot";
@@ -14,6 +25,15 @@ const DISCOVERERS: AgentDiscoverer[] = [
   opencodeDiscoverer,
   droidDiscoverer,
   copilotDiscoverer,
+  ampDiscoverer,
+  codebuffDiscoverer,
+  gooseDiscoverer,
+  hermesDiscoverer,
+  kiloDiscoverer,
+  kimiDiscoverer,
+  openclawDiscoverer,
+  piDiscoverer,
+  qwenDiscoverer,
 ];
 
 export const discoverAll = async (sources?: SessionSource[]): Promise<FileCandidate[]> => {

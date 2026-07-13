@@ -50,9 +50,9 @@ export const runScan = async (options: ScanOptions = {}): Promise<ScanResult> =>
   const sessions: Session[] = [];
 
   for (const candidate of changed) {
-    const parsed = await parseFile(candidate);
+    const parsedSessions = await parseFile(candidate);
 
-    if (!parsed) {
+    if (parsedSessions.length === 0) {
       errors += 1;
       scanState[candidate.path] = {
         source: candidate.source,
@@ -63,14 +63,16 @@ export const runScan = async (options: ScanOptions = {}): Promise<ScanResult> =>
       continue;
     }
 
-    const { session } = normalizeSession(parsed);
-    sessions.push(session);
+    for (const parsed of parsedSessions) {
+      const { session } = normalizeSession(parsed);
+      sessions.push(session);
+    }
 
     scanState[candidate.path] = {
       source: candidate.source,
       fileSize: candidate.size,
       mtimeMs: candidate.mtime,
-      parsedAt: session.parsedAt,
+      parsedAt: new Date().toISOString(),
     };
 
     scanned += 1;

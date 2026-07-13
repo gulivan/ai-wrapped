@@ -24,6 +24,15 @@ Built on top of [agent-sessions](https://github.com/jazzyalex/agent-sessions) se
 - **OpenCode** — OpenCode session data
 - **Droid** — Droid session files
 - **GitHub Copilot** — Copilot session logs
+- **Amp** — Amp thread usage ledgers
+- **Codebuff** — Codebuff agent chats
+- **Goose** — Goose session database
+- **Hermes** — Hermes state database
+- **Kilo** — Kilo message database
+- **Kimi Code** — Kimi wire session logs
+- **OpenClaw** — OpenClaw session logs
+- **pi** — pi-agent session logs
+- **Qwen Code** — Qwen chat logs
 
 ## What It Shows
 

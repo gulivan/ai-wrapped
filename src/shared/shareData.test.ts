@@ -40,10 +40,10 @@ const payloadFixture: SharePayload = {
     },
   ],
   dailyAgentTokensByDate: {
-    "2025-12-31": { claude: 0, codex: 2000, gemini: 0, opencode: 0, droid: 0, copilot: 0 },
+    "2025-12-31": { claude: 0, codex: 2000, gemini: 0, opencode: 0, droid: 0, copilot: 0, amp: 0, codebuff: 0, goose: 0, hermes: 0, kilo: 0, kimi: 0, openclaw: 0, pi: 0, qwen: 0 },
   },
   dailyAgentCostsByDate: {
-    "2025-12-31": { claude: 0, codex: 1.23, gemini: 0, opencode: 0, droid: 0, copilot: 0 },
+    "2025-12-31": { claude: 0, codex: 1.23, gemini: 0, opencode: 0, droid: 0, copilot: 0, amp: 0, codebuff: 0, goose: 0, hermes: 0, kilo: 0, kimi: 0, openclaw: 0, pi: 0, qwen: 0 },
   },
   dailyModelCostsByDate: {
     "2025-12-31": { "gpt-4.1": 1.23 },

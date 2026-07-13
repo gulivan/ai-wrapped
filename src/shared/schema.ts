@@ -1,6 +1,37 @@
-export type SessionSource = "claude" | "codex" | "gemini" | "opencode" | "droid" | "copilot";
+export type SessionSource =
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "opencode"
+  | "droid"
+  | "copilot"
+  | "amp"
+  | "codebuff"
+  | "goose"
+  | "hermes"
+  | "kilo"
+  | "kimi"
+  | "openclaw"
+  | "pi"
+  | "qwen";
 
-export const SESSION_SOURCES: SessionSource[] = ["claude", "codex", "gemini", "opencode", "droid", "copilot"];
+export const SESSION_SOURCES: SessionSource[] = [
+  "claude",
+  "codex",
+  "gemini",
+  "opencode",
+  "droid",
+  "copilot",
+  "amp",
+  "codebuff",
+  "goose",
+  "hermes",
+  "kilo",
+  "kimi",
+  "openclaw",
+  "pi",
+  "qwen",
+];
 
 export interface TokenUsage {
   inputTokens: number;

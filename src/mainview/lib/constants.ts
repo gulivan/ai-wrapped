@@ -7,6 +7,15 @@ export const SOURCE_LABELS: Record<SessionSource, string> = {
   opencode: "OpenCode",
   droid: "Droid",
   copilot: "Copilot",
+  amp: "Amp",
+  codebuff: "Codebuff",
+  goose: "Goose",
+  hermes: "Hermes",
+  kilo: "Kilo",
+  kimi: "Kimi",
+  openclaw: "OpenClaw",
+  pi: "pi",
+  qwen: "Qwen Code",
 };
 
 export const SOURCE_COLORS: Record<SessionSource, string> = {
@@ -16,6 +25,15 @@ export const SOURCE_COLORS: Record<SessionSource, string> = {
   opencode: "#f97316",
   droid: "#34d399",
   copilot: "#f43f5e",
+  amp: "#a78bfa",
+  codebuff: "#fb7185",
+  goose: "#22c55e",
+  hermes: "#e879f9",
+  kilo: "#facc15",
+  kimi: "#fb923c",
+  openclaw: "#38bdf8",
+  pi: "#94a3b8",
+  qwen: "#2dd4bf",
 };
 
 export const CHART_COLORS = [

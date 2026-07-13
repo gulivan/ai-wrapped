@@ -47,7 +47,7 @@ const SCAN_STATE_PATH = join(DATA_DIR, "scan-state.json");
 const DAILY_PATH = join(DATA_DIR, "daily.json");
 const AGGREGATION_META_PATH = join(DATA_DIR, "aggregation-meta.json");
 const SETTINGS_PATH = join(DATA_DIR, "settings.json");
-const AGGREGATION_META_VERSION = 2;
+const AGGREGATION_META_VERSION = 3;
 
 const DEFAULT_SETTINGS: AppSettings = {
   scanOnLaunch: true,
