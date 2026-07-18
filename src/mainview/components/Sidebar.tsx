@@ -5,7 +5,8 @@ export type ShareMenuAction =
   | "download-image"
   | "download-full-pdf"
   | "open-summary-share"
-  | "open-full-share"
+  | "open-full-share-compact"
+  | "open-full-share-max"
   | "open-full-share-no-repos";
 
 interface SidebarProps {
@@ -75,14 +76,19 @@ const Sidebar = ({
         description: "Compact link via share_summary",
       },
       {
-        action: "open-full-share",
-        label: "Open full share",
-        description: "Full dashboard data",
+        action: "open-full-share-compact",
+        label: "Open full share (compact)",
+        description: "Targets <=2k URL chars",
+      },
+      {
+        action: "open-full-share-max",
+        label: "Open full share (max detail)",
+        description: "Highest fidelity; longer URL",
       },
       {
         action: "open-full-share-no-repos",
-        label: "Open share (no repos)",
-        description: "Full data without repository info",
+        label: "Open full share (compact, no repos)",
+        description: "Targets <=2k without repo data",
       },
     ],
     [],
